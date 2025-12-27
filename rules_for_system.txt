@@ -1,0 +1,311 @@
+============================================================
+AI-ASSISTED MECHANICAL MARKET STRUCTURE TRADING SYSTEM
+RULE PANEL v1.1 (STRICT / MACHINE-READABLE)
+============================================================
+
+SYSTEM BEHAVIOR
+---------------
+• Uses ONLY numerical OHLC data (no chart images)
+• All logic is evaluated ONLY after candle close
+• Trades ONLY one instrument (single pair)
+• Fully mechanical — zero human discretion
+• No prediction — only reaction to confirmed structure
+• If ANY rule fails → system does NOTHING
+
+
+============================================================
+SESSION RULES (HARD FILTER)
+============================================================
+• Trading is allowed ONLY during:
+  – London session
+  – New York session
+
+• Asia session:
+  – NO trade but will be allowed t track the structure 
+• If current candle time ∉ London or NY:
+  → system is IDLE
+
+
+============================================================
+TIMEFRAME AUTHORITY
+============================================================
+
+• 4H:
+  – PRIMARY trend authority
+  – Controls trade direction
+
+• 30M:
+  – Continuation & post-trade structure
+
+• 5M:
+  – Entry confirmation ONLY
+
+• If timeframes conflict:
+  → 4H ALWAYS overrides all lower TFs
+
+
+============================================================
+DEFINITION SECTION (NO ASSUMPTIONS)
+============================================================
+
+SWING WEAK HIGH(HH)
+----------
+the high of the candle in the leg which has accunted previos BOS and gave a pullback and in continuation of bullish this will be tend to break
+
+SWING STRONG LOW(HL)
+---------
+the low of the candle in the leg which is strong and doesnt break 
+
+SWING STRONG HIGH(LH)
+---------
+the high of the candle which is strong and doesnt break
+
+SWING WEAK LOW(LL)
+---------
+the low of the candle in the leg which led to previos BOS and gave a pullback and in continuation of bearish this will be tend to break
+
+------------------------------------------------------------
+NOTE::There can be any number of candles between the swing points 
+
+
+BULLISH STRUCTURE
+----------------
+• Sequence of:
+  – Higher High (HH)
+  – Higher Low (HL)
+
+BEARISH STRUCTURE
+----------------
+• Sequence of:
+  – Lower Low (LL)
+  – Lower High (LH)
+
+NEUTRAL STRUCTURE
+-----------------
+• No valid HH/HL or LL/LH sequence
+
+------------------------------------------------------------
+
+BREAK OF STRUCTURE (BOS)
+------------------------
+• Price CLOSES beyond the most recent valid swing high (bullish)
+  or swing low (bearish)
+• Break must be a CLOSE, not a wick
+• BOS continues the current trend
+
+------------------------------------------------------------
+
+CHANGE OF CHARACTER (CHoCH)
+---------------------------
+• First CLOSE that breaks the LAST opposing swing
+• Signals potential trend shift
+• CHoCH ≠ trend until confirmed by BOS
+
+
+============================================================
+STEP 1 — 4H MARKET STRUCTURE (MASTER CONTROL)
+============================================================
+• Detect swing highs & lows on 4H
+• Determine structure state:
+  – Bullish
+  – Bearish
+  – Neutral
+
+RULES:
+• Bullish 4H → ONLY BUY logic allowed
+• Bearish 4H → ONLY SELL logic allowed
+• Neutral 4H → SYSTEM DISABLED
+
+• System tracks:
+  – Last HH / HL or LH / LL
+  – Previous highs & lows
+  – Mitigated zones
+
+• Trading AGAINST 4H trend is FORBIDDEN
+
+
+============================================================
+STEP 2 — PULLBACK VALIDATION (FLEXIBLE, BUT REQUIRED)
+============================================================
+A pullback is VALID if ANY ONE of the following is TRUE:
+
+1️⃣ Price pulls back INTO a valid POI  
+2️⃣ Price enters Discount (BUY) or Premium (SELL) zone  
+3️⃣ Price sweeps external liquidity  
+
+ADDITIONAL RULES:
+• Pullback must move AGAINST 4H trend
+• Must contain ≥ 2 consecutive opposite dierction candles candles
+• If NONE of the 3 conditions occur → NO trade logic
+
+
+============================================================
+STEP 3 — POINT OF INTEREST (POI)
+============================================================
+
+VALID POI REQUIREMENTS:
+-----------------------
+A POI is valid ONLY if ALL are true:
+
+• POI aligns with 4H trend
+  – Demand for BUY
+  – Supply for SELL
+
+• POI location:
+  – Discount for BUY
+  – Premium for SELL
+
+• POI is NOT already consumed
+
+------------------------------------------------------------
+
+POI ACTIVATION RULE
+-------------------
+• POI becomes ACTIVE ONLY when price ENTERS the zone
+• No entry into POI → system WAITS
+
+
+============================================================
+STEP 4 — LIQUIDITY REQUIREMENT (NON-NEGOTIABLE)
+============================================================
+
+LIQUIDITY TYPES:
+----------------
+• Equal highs
+• Equal lows
+• Previous swing highs
+• Previous swing lows
+
+VALID LIQUIDITY SWEEP:
+----------------------
+• Price MOVES beyond liquidity
+• Then RETURNS back inside
+
+PROBABILITY RULE:
+-----------------
+• If SUPPLY (SELL) or DEMAND (BUY) liquidity is swept:
+  → setup probability is HIGH
+
+• If NO liquidity sweep:
+  → system is DISABLED
+
+
+============================================================
+STEP 5 — 5M CONFIRMATION (ENTRY GATE)
+============================================================
+
+REQUIRED SEQUENCE:
+------------------
+1. POI tapped
+2. Liquidity swept
+3. THEN evaluate 5M
+
+5M RULES:
+---------
+• Identify current 5M structure
+• Wait for CHoCH in 5M
+
+VALID 5M CHoCH:
+---------------
+• CLOSE breaks last opposing 5M swing
+• Break is in direction of 4H trend
+• Occurs AFTER liquidity sweep
+
+• No CHoCH → NO trade
+
+
+============================================================
+STEP 6 — ENTRY CONDITIONS (ALL MUST PASS)
+============================================================
+
+✔ London or NY session  
+✔ Clear 4H trend  
+✔ Valid pullback (any 1 of 3)  
+✔ POI tapped  
+✔ Liquidity swept  
+✔ 5M CHoCH confirmed  
+✔ Imbalance created AFTER CHoCH  
+
+FAIL ANY ONE → NO ENTRY
+
+
+============================================================
+STEP 7 — ENTRY EXECUTION
+============================================================
+
+ENTRY:
+------
+• Entry at imbalance created AFTER CHoCH
+
+STOP LOSS:
+----------
+• BUY → below latest 5M swing low + 4 pips
+• SELL → above latest 5M swing high + 4 pips
+
+TAKE PROFIT:
+------------
+• Minimum fixed R:R = 1:3
+
+
+TRADE MANAGEMENT:
+-----------------
+• No breakeven
+• No partials
+• No manual exit
+
+
+============================================================
+STEP 8 — TRADE INVALIDATION
+============================================================
+Setup is INVALID if:
+
+• Opposite CHoCH appears before entry
+• Price leaves POI without confirmation
+• Session ends before entry
+• Imbalance never revisited
+
+
+============================================================
+STEP 9 — POST-TRADE CONTINUATION LOGIC (30M)
+============================================================
+
+If the poi is tapped and if or if not trade taken but given 30M CHoCH  THEN :
+------------------------
+• System STOPS trading on 5M
+• Switches focus to 30M structure
+
+30M RULES:
+----------
+• Track trend continuation via BOS
+• Map new POI in direction of 30M trend and this trend is now allign with 4H trend 
+• Wait for pullback on 30M to the POI in the 30 M leg
+• Pullback must satisfy the above conditions
+• Once pullback completes → wait for new 5M confirmation
+• If pullback leds to CHoCH , try spotting other POI in the 4H trend and follow the above 1st setup, else continue in 30M trend to the swing
+
+
+NO immediate re-entries allowed
+
+
+============================================================
+EXECUTION LIMITS
+============================================================
+• ONE trade per POI
+• Once POI is used → marked CONSUMED
+• No re-entries on same POI until it sweeps the enisting POI
+
+
+
+============================================================
+CORE PRINCIPLES
+============================================================
+• No prediction
+• No guessing
+• No anticipation
+• No discretion
+• Structure is law
+• Rules override emotion
+
+============================================================
+END OF RULE PANEL v1.1
+============================================================
