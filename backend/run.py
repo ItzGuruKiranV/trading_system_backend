@@ -28,6 +28,8 @@ sys.path.insert(0, str(BASE_DIR))
 from engine.resample import resample_to_4h , resample_to_5m
 from engine.trend_seed import detect_seed
 from engine.swings_detect import market_structure_mapping
+from engine_2.resample import resample_to_30m  
+from engine_2.structure_mapping_30m import market_structure_mapping_30m
 
 # ==================================================
 # FIXED INPUT FILE
@@ -92,6 +94,8 @@ def main():
         print(f"✅ Resampled to {len(df_4h)} 4-hour candles")
         df_5m = resample_to_5m(df_1m)
         print(f"✅ Resampled to {len(df_5m)} 5-minute candles")
+        df_30m = resample_to_30m(df_1m)
+        print(f"✅ Resampled to {len(df_30m)} 30-minute candles")
     except Exception as e:
         print(f"❌ Error during resampling: {e}")
         return
@@ -122,18 +126,18 @@ def main():
     print("\n[Alignment] Aligning 5M data to 4H structure...")
 
     refined_5m_df = df_5m[df_5m.index >= first_4h_time]
+    refined_30m_df = df_30m[df_30m.index >= first_4h_time]
 
     print(f"4H candles after seed : {len(refined_4h_df)}")
     print(f"5M candles after seed : {len(refined_5m_df)}")
-
-
+    print(f"30M candles after seed : {len(refined_30m_df)}")
 
 
 
     # --------------------------------------------------
     # STEP 4: RULE-BASED SWING DETECTION (PHASE 1)
     # --------------------------------------------------print("\n[Phase 1] Running rule-based structure mapping...")
-    print("\n[Phase 1] Running rule-based structure mapping...")
+    print("\n[Phase 1] Running rule-based structure mapping... 1 ")
     try:
         # Sanity checks
         if refined_4h_df.empty or refined_5m_df.empty:
@@ -151,6 +155,32 @@ def main():
 
     except Exception as e:
         print(f"\n❌ Error in structure mapping: {e}")
+
+
+    print("\n[Phase 1] Running rule-based structure mapping... 2 ")
+    try:
+        # Sanity checks
+        if refined_4h_df.empty or refined_5m_df.empty or refined_30m_df.empty:
+            raise ValueError("Refined dataframes are empty")
+
+        # --------------------------------------------------
+        # CALL STRUCTURE LOGIC WITH 30M ADDED
+        # --------------------------------------------------
+        market_structure_mapping(
+            df_4h=refined_4h_df,
+            df_5m=refined_5m_df,
+            df_30m=refined_30m_df,
+            trend=trend,
+            bos_time=bos_time,
+        )
+    except Exception as e:
+        print(f"\n❌ Error in structure mapping: {e}")
+
+
+
+
+
+
 
 
 # ==================================================
