@@ -145,8 +145,8 @@ def main():
         market_structure_mapping_dynamic(df_4h=refined_4h_df, df_5m=refined_5m_df, trend=trend, bos_time=bos_time)
 
         # Plotting phase  
-        from swings_detect import EVENT_LOG
-        from swings_plot import swings_plotter  # Import the log
+        from engine.swings_detect import EVENT_LOG
+        from debug.swings_plot import swings_plotter  # Import the log
         plotter = swings_plotter(refined_4h_df)
         for state in EVENT_LOG:
             plotter.plot_single_state(state)

@@ -6,7 +6,7 @@ from typing import Optional, Dict, List
 from dataclasses import dataclass
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'debug'))
-from swings_plot import swings_plotter, swing_state  # FIXED version in debug/
+from debug.swings_plot import swings_plotter, swing_state  # FIXED version in debug/
 from engine.poi_detection import detect_pois_from_swing
 from engine.mins_choch import process_structure_and_return_last_swing
 from engine.plan_trade_5mins import plan_trade_from_choch_leg
@@ -31,8 +31,9 @@ def log_event(idx, t, trend, event,
 
     # 🔹 Prevent duplicate events of same type on same candle
     for e in EVENT_LOG:
-        if e["index"] == idx and e["event"] == event:
+        if e.index == idx and e.event == event:
             return
+
     if idx <= last_logged_index:
         return
     
