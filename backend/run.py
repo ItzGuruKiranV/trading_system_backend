@@ -27,7 +27,9 @@ sys.path.insert(0, str(BASE_DIR))
 # ==================================================
 from engine.resample import resample_to_4h , resample_to_5m
 from engine.trend_seed import detect_seed
-from engine.swings_detect import market_structure_mapping
+from engine_2.resample import resample_to_30m  
+from engine_2.structure_mapping_30m import market_structure_mapping_30m
+from engine.swings_detect import market_structure_mapping_dynamic
 
 # ==================================================
 # FIXED INPUT FILE
@@ -133,7 +135,7 @@ def main():
     # --------------------------------------------------
     # STEP 4: RULE-BASED SWING DETECTION (PHASE 1)
     # --------------------------------------------------print("\n[Phase 1] Running rule-based structure mapping...")
-    print("\n[Phase 1] Running rule-based structure mapping...")
+    print("\n[Phase 1] Running rule-based structure mapping... 1 ")
     try:
         # Sanity checks
         if refined_4h_df.empty or refined_5m_df.empty:
@@ -169,7 +171,7 @@ def main():
         # --------------------------------------------------
         # CALL STRUCTURE LOGIC WITH 30M ADDED
         # --------------------------------------------------
-        market_structure_mapping(
+        market_structure_mapping_30m(
             df_4h=refined_4h_df,
             df_5m=refined_5m_df,
             df_30m=refined_30m_df,

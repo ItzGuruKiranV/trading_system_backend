@@ -13,46 +13,17 @@ def resample_to_4h(data: pd.DataFrame) -> pd.DataFrame:
     df = data.copy()
     df = df.sort_index()
 
-    out = []
-    bucket = []
-    current_block_start = None
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(df.index)
 
-    def four_hour_block_start(t: pd.Timestamp) -> pd.Timestamp:
-        block_hour = (t.hour // 4) * 4
-        return t.replace(hour=block_hour, minute=0, second=0, microsecond=0)
+    df_4h = df.resample("4H", label="left", closed="left").agg(
+        open=("open", "first"),
+        high=("high", "max"),
+        low=("low", "min"),
+        close=("close", "last"),
+    )
 
-    for t, row in df.iterrows():
-        this_block_start = four_hour_block_start(t)
-
-        if current_block_start is None:
-            current_block_start = this_block_start
-
-        if this_block_start != current_block_start and bucket:
-            out.append({
-                "time": bucket[0][0],
-                "open": bucket[0][1]["open"],
-                "high": max(x[1]["high"] for x in bucket),
-                "low":  min(x[1]["low"]  for x in bucket),
-                "close": bucket[-1][1]["close"],
-            })
-            bucket = []
-            current_block_start = this_block_start
-
-        bucket.append((t, row))
-
-    if bucket:
-        out.append({
-            "time": bucket[0][0],
-            "open": bucket[0][1]["open"],
-            "high": max(x[1]["high"] for x in bucket),
-            "low":  min(x[1]["low"]  for x in bucket),
-            "close": bucket[-1][1]["close"],
-        })
-
-    df_4h = pd.DataFrame(out)
-    df_4h.set_index("time", inplace=True)
-    df_4h.sort_index(inplace=True)
-
+    df_4h.dropna(how="all", inplace=True)
     return df_4h
 
 
@@ -68,44 +39,15 @@ def resample_to_5m(data: pd.DataFrame) -> pd.DataFrame:
     df = data.copy()
     df = df.sort_index()
 
-    out = []
-    bucket = []
-    current_block_start = None
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(df.index)
 
-    def five_minute_block_start(t: pd.Timestamp) -> pd.Timestamp:
-        block_minute = (t.minute // 5) * 5
-        return t.replace(minute=block_minute, second=0, microsecond=0)
+    df_5m = df.resample("5T", label="left", closed="left").agg(
+        open=("open", "first"),
+        high=("high", "max"),
+        low=("low", "min"),
+        close=("close", "last"),
+    )
 
-    for t, row in df.iterrows():
-        this_block_start = five_minute_block_start(t)
-
-        if current_block_start is None:
-            current_block_start = this_block_start
-
-        if this_block_start != current_block_start and bucket:
-            out.append({
-                "time": bucket[0][0],
-                "open": bucket[0][1]["open"],
-                "high": max(x[1]["high"] for x in bucket),
-                "low":  min(x[1]["low"]  for x in bucket),
-                "close": bucket[-1][1]["close"],
-            })
-            bucket = []
-            current_block_start = this_block_start
-
-        bucket.append((t, row))
-
-    if bucket:
-        out.append({
-            "time": bucket[0][0],
-            "open": bucket[0][1]["open"],
-            "high": max(x[1]["high"] for x in bucket),
-            "low":  min(x[1]["low"]  for x in bucket),
-            "close": bucket[-1][1]["close"],
-        })
-
-    df_5m = pd.DataFrame(out)
-    df_5m.set_index("time", inplace=True)
-    df_5m.sort_index(inplace=True)
-
+    df_5m.dropna(how="all", inplace=True)
     return df_5m

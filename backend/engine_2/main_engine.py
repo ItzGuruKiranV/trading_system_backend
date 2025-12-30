@@ -213,3 +213,7 @@ def engine_30m_beast_realtime(
         poi_index += 1
 
     return {"status": "CONTINUE"}
+
+
+# Backwards-compatible alias expected by other modules
+engine_30m = engine_30m_beast_realtime

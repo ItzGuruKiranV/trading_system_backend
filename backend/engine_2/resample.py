@@ -1,3 +1,6 @@
+import pandas as pd
+
+
 def resample_to_30m(data: pd.DataFrame) -> pd.DataFrame:
     """
     Resample 1-minute DataFrame to 30-minute OHLC DataFrame.
