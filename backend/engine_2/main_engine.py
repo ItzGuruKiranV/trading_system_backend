@@ -1,5 +1,5 @@
 import pandas as pd
-from typing import Dict
+from typing import Dict, Optional
 
 from engine_2.poi_detection_30m import detect_pois_from_swing
 from engine.mins_choch import process_structure_and_return_last_swing
@@ -24,16 +24,23 @@ def engine_30m_beast_realtime(
     pullback_confirmed = False
     pullback_time = None
 
-    impulse_high = None
-    impulse_low = None
+    impulse_high: Optional[float] = None
+    impulse_low: Optional[float] = None
     opp_count = 0
 
-    choch_level_30m = None
+    choch_level_30m: Optional[float] = None
 
     pois = []
     poi_index = 0
 
+    # Trade state
     trade_taken = False
+    trade_details: Optional[dict] = None
+    entry_filled = False
+
+    # BOS tracking (kept as in your code)
+    bos_confirmed = False
+    bos_range_low: Optional[float] = None
 
     # ===============================
     # MAIN 30M LOOP
@@ -58,6 +65,29 @@ def engine_30m_beast_realtime(
 
             if trend == "BEARISH" and c30.close > choch_level_30m:
                 return {"status": 2, "time": t30}
+
+        # --------------------------------------------------
+        # 7️⃣ 30M BOS → RESET LEG
+        # --------------------------------------------------
+        if impulse_high is not None and trend == "BULLISH" and c30.high > impulse_high:
+            pullback_confirmed = False
+            impulse_high = c30.high
+            impulse_low = None
+            opp_count = 0
+            pois = []
+            poi_index = 0
+            trade_taken = False
+            choch_level_30m = c30.low
+
+        if impulse_low is not None and trend == "BEARISH" and c30.low < impulse_low:
+            pullback_confirmed = False
+            impulse_low = c30.low
+            impulse_high = None
+            opp_count = 0
+            pois = []
+            poi_index = 0
+            trade_taken = False
+            choch_level_30m = c30.high
 
         # --------------------------------------------------
         # 3️⃣ WAIT FOR 30M PULLBACK
@@ -122,7 +152,7 @@ def engine_30m_beast_realtime(
         # 5️⃣ PROCESS CURRENT 30M CANDLE
         # --------------------------------------------------
         if trade_taken:
-            continue  # wait for next 30M BOS
+            continue
 
         if poi_index >= len(pois):
             continue
@@ -152,12 +182,10 @@ def engine_30m_beast_realtime(
             (df_5m.index <= t30)
         ]
 
-        protected_5m = None
         opp_trend = "BEARISH" if trend == "BULLISH" else "BULLISH"
 
         for t5, c5 in m5_live.iterrows():
 
-            # update 5M structure candle-by-candle
             protected_5m = process_structure_and_return_last_swing(
                 df=m5_live.loc[:t5],
                 trend=opp_trend,
@@ -166,11 +194,8 @@ def engine_30m_beast_realtime(
             if protected_5m is None:
                 continue
 
-            # -------------------------------
-            # 5M CHOCH (EXECUTE IMMEDIATELY)
-            # -------------------------------
             if trend == "BULLISH" and c5.close > protected_5m:
-                trade = plan_trade_from_choch_leg(
+                trade_details = plan_trade_from_choch_leg(
                     m5_live.loc[:t5],
                     trend
                 )
@@ -178,37 +203,13 @@ def engine_30m_beast_realtime(
                 break
 
             if trend == "BEARISH" and c5.close < protected_5m:
-                trade = plan_trade_from_choch_leg(
+                trade_details = plan_trade_from_choch_leg(
                     m5_live.loc[:t5],
                     trend
                 )
                 trade_taken = True
                 break
 
-        # move to next POI after trade or failure
         poi_index += 1
-
-        # --------------------------------------------------
-        # 7️⃣ 30M BOS → RESET LEG
-        # --------------------------------------------------
-        if trend == "BULLISH" and c30.high > impulse_high:
-            pullback_confirmed = False
-            impulse_high = c30.high
-            impulse_low = None
-            opp_count = 0
-            pois = []
-            poi_index = 0
-            trade_taken = False
-            choch_level_30m = c30.low
-
-        if trend == "BEARISH" and c30.low < impulse_low:
-            pullback_confirmed = False
-            impulse_low = c30.low
-            impulse_high = None
-            opp_count = 0
-            pois = []
-            poi_index = 0
-            trade_taken = False
-            choch_level_30m = c30.high
 
     return {"status": "CONTINUE"}
