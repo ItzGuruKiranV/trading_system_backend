@@ -28,14 +28,12 @@ sys.path.insert(0, str(BASE_DIR))
 from engine.resample import resample_to_4h , resample_to_5m
 from engine.trend_seed import detect_seed
 from engine.swings_detect import market_structure_mapping
-from engine_2.resample import resample_to_30m  
-from engine_2.structure_mapping_30m import market_structure_mapping_30m
 
 # ==================================================
 # FIXED INPUT FILE
 # ==================================================
 MINUTE_CSV_PATH = Path(
-    r"C:\Gurukiran\projects\trading_system\trading_system_backend\HISTDATA_COM_MT_EURUSD_M12022\DAT_MT_EURUSD_M1_2022.csv"
+    r"D:\Trading Project\trading_system_backend\HISTDATA_COM_MT_EURUSD_M12023\DAT_MT_EURUSD_M1_2023.csv"
 )
 
 # ==================================================
@@ -108,12 +106,10 @@ def main():
     # ---------------------------------------------
     print("\n[Seed Phase] Running seed detection on 4H...")
 
-    refined_4h_df, trend, bos_time = detect_seed(df_4h)
+    refined_4h_df, trend, bos_time, break_idx, states = detect_seed(df_4h)
+    print(f"✅ Seed detected: {trend} at {bos_time}")
 
-    print("✅ Seed detected")
-    print(f"Trend    : {trend}")
-    print(f"BOS Time : {bos_time}")
-
+    
     # ---------------------------------------------
     # HARD ALIGNMENT (SAFETY)
     # ---------------------------------------------
@@ -137,24 +133,31 @@ def main():
     # --------------------------------------------------
     # STEP 4: RULE-BASED SWING DETECTION (PHASE 1)
     # --------------------------------------------------print("\n[Phase 1] Running rule-based structure mapping...")
-    print("\n[Phase 1] Running rule-based structure mapping... 1 ")
+    print("\n[Phase 1] Running rule-based structure mapping...")
     try:
         # Sanity checks
         if refined_4h_df.empty or refined_5m_df.empty:
             raise ValueError("Refined dataframes are empty")
 
-        # --------------------------------------------------
-        # CALL STRUCTURE LOGIC WITH NEW INTERFACE
-        # --------------------------------------------------
-        market_structure_mapping(
+        # 🔥 DYNAMIC SWINGS PLOTTER
+        from debug.swings_plot import swings_plotter
+        plotter = swings_plotter(refined_4h_df)
+        
+        # 🚀 FULL DYNAMIC STRUCTURE MAPPING
+        market_structure_mapping_dynamic(
             df_4h=refined_4h_df,
             df_5m=refined_5m_df,
             trend=trend,
             bos_time=bos_time,
+            plotter=plotter,  # ← NEW PLOTTER PARAM
+            pullback_pct=0.35,
+            min_pullback_candles=5
         )
+        print("✅ DYNAMIC SWINGS COMPLETE!")
 
     except Exception as e:
-        print(f"\n❌ Error in structure mapping: {e}")
+        print(f"\n❌ Error in dynamic swings mapping: {e}")
+
 
 
     print("\n[Phase 1] Running rule-based structure mapping... 2 ")

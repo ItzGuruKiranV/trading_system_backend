@@ -1,9 +1,36 @@
 import pandas as pd
+import sys
+import os
+import matplotlib.pyplot as plt  # ← ADD THIS
+import matplotlib  # ← ADD THIS
+
+# Fix debug folder path
+debug_path = os.path.join(os.path.dirname(__file__), '..', 'debug')
+sys.path.insert(0, debug_path)
+
+from seed_plot import SeedPlotter  
 
 SEED_DAYS = 10
 CANDLES_PER_DAY_4H = 6
 SEED_CANDLES = SEED_DAYS * CANDLES_PER_DAY_4H
 
+from dataclasses import dataclass
+from typing import Optional, List
+
+@dataclass
+class CandleState:
+    index: int
+    time: pd.Timestamp
+    temp_trend: str
+    pullback_active: bool
+    protected_level: Optional[float] = None  # ← ADD DEFAULT
+    seed_high: float = 0.0                   # ← ADD DEFAULT
+    seed_low: float = 0.0                    # ← ADD DEFAULT
+    pullback_low: float = float('inf')       # ← NEW: Required for seed_plot.py
+    pullback_high: float = float('-inf')     # ← NEW: Required for seed_plot.py
+    event: Optional[str] = None
+    pullback_start_idx: Optional[int] = None
+    seed_complete: bool = False
 
 def detect_seed(df_4h: pd.DataFrame):
     """
@@ -13,12 +40,22 @@ def detect_seed(df_4h: pd.DataFrame):
         refined_df : DataFrame
         trend      : "BULLISH" | "BEARISH"
         break_time : Timestamp (exact break candle time)
+        break_idx  : int (break candle index)
+        states     : List[CandleState]  # NEW: for animation
     """
-
+    """
+    DYNAMIC REAL-TIME SEED DETECTION WITH INSTANT PLOTTING!
+    Plots EXACTLY when BOS/CHOCH/PULLBACK events happen.
+    """
     df = df_4h.copy().sort_index()
 
     if len(df) < SEED_CANDLES + 5:
         raise ValueError("Not enough data for seed detection")
+
+    plotter = SeedPlotter(df, [])
+    plotter.states = []  # Track states for plotting past events
+    states = []
+    
 
     # --------------------------------------------------
     # STEP 1 — TAKE FIRST 10 DAYS
@@ -45,6 +82,20 @@ def detect_seed(df_4h: pd.DataFrame):
 
     print(f"TEMP TREND : {temp_trend}")
 
+    # DYNAMIC: Plot seed candles ONE BY ONE
+    for i in range(SEED_CANDLES):
+        seed_complete = (i == SEED_CANDLES - 1)  # ← LAST seed candle
+        state=CandleState(
+            index=i, time=df.index[i], temp_trend=temp_trend,
+            pullback_active=False, protected_level=None,
+            seed_high=seed_high, seed_low=seed_low,
+            seed_complete=seed_complete
+        )
+        states.append(state)
+        plotter.states.append(state)
+        plotter.plot_single_state(state)    
+
+
     # --------------------------------------------------
     # STEP 3 — PULLBACK DETECTION
     # --------------------------------------------------
@@ -53,10 +104,29 @@ def detect_seed(df_4h: pd.DataFrame):
     pullback_lows = []
     pullback_highs = []
     pullback_start_idx = None
+    pullback_confirm_idx = None
+    final_pullback_low = float('inf')
+    final_pullback_high = float('-inf')
 
     for i in range(SEED_CANDLES, len(df)):
         prev_candle = df.iloc[i - 1]
         candle = df.iloc[i]
+
+        # Base state BEFORE logic
+        current_pullback_low = min(pullback_lows) if pullback_lows else float('inf')
+        current_pullback_high = max(pullback_highs) if pullback_highs else float('-inf')
+
+        state = CandleState(
+            index=i, time=df.index[i], temp_trend=temp_trend,
+            pullback_active=pullback_active, protected_level=protected_level,
+            seed_high=seed_high, seed_low=seed_low,
+            pullback_low=current_pullback_low, pullback_high=current_pullback_high,
+            event=None, pullback_start_idx=pullback_start_idx, seed_complete=True
+        )
+        states.append(state)
+        plotter.states.append(state)
+
+        
 
         # -----------------------------
         # BULLISH TEMP TREND
@@ -72,20 +142,34 @@ def detect_seed(df_4h: pd.DataFrame):
                     protected_level = prev_candle["high"]
                     pullback_start_idx = i
                     pullback_active = True
-
-                # protected high must NOT break
-                if candle["high"] > protected_level:
-                    pullback_active = False
-                    pullback_lows.clear()
-                    pullback_highs.clear()
+                    state.event = "PULLBACK_START"
+                    plotter.plot_single_state(state)
                     continue
-
-                pullback_lows.append(candle["low"])
-                pullback_highs.append(candle["high"])
+                
+                # protected high must NOT break
+                if pullback_active:
+                    if candle["high"] > protected_level:
+                        # 🔥 PULLBACK RESET → PLOT!
+                        state.event = "PULLBACK_RESET"
+                        pullback_active = False
+                        protected_level = None
+                        pullback_lows.clear()
+                        pullback_highs.clear()
+                        plotter.plot_single_state(state)
+                        continue
+                    else:
+                        pullback_lows.append(candle["low"])
+                        pullback_highs.append(candle["high"])
 
             if pullback_active and len(pullback_lows) >= 1:
-                pullback_low = min(pullback_lows)
-                pullback_high = max(pullback_highs)
+                # 🔥 PULLBACK CONFIRMED → PLOT!
+                final_pullback_low = min(pullback_lows)
+                final_pullback_high = max(pullback_highs)
+                state.pullback_low = final_pullback_low
+                state.pullback_high = final_pullback_high
+                state.event = "PULLBACK_CONFIRMED"
+                pullback_confirm_idx = i
+                plotter.plot_single_state(state)
                 break
 
         # -----------------------------
@@ -97,69 +181,114 @@ def detect_seed(df_4h: pd.DataFrame):
                 and candle["high"] > prev_candle["low"]
             )
 
-            if is_pullback:
-                if not pullback_active:
-                    protected_level = prev_candle["low"]
-                    pullback_start_idx = i
-                    pullback_active = True
+            if is_pullback and not pullback_active:
+                # 🔥 PULLBACK START → PLOT!
+                protected_level = prev_candle["low"]
+                pullback_start_idx = i
+                pullback_active = True
+                state.event = "PULLBACK_START"
+                plotter.plot_single_state(state)
+                continue
 
-                # protected low must NOT break
+            if pullback_active:
                 if candle["low"] < protected_level:
+                    # 🔥 PULLBACK RESET → PLOT!
+                    state.event = "PULLBACK_RESET"
                     pullback_active = False
+                    protected_level = None
                     pullback_lows.clear()
                     pullback_highs.clear()
+                    plotter.plot_single_state(state)
                     continue
-
-                pullback_lows.append(candle["low"])
-                pullback_highs.append(candle["high"])
+                else:
+                    pullback_lows.append(candle["low"])
+                    pullback_highs.append(candle["high"])
 
             if pullback_active and len(pullback_highs) >= 1:
-                pullback_low = min(pullback_lows)
-                pullback_high = max(pullback_highs)
+                # 🔥 PULLBACK CONFIRMED → PLOT!
+                final_pullback_low = min(pullback_lows)
+                final_pullback_high = max(pullback_highs)
+                state.pullback_low = final_pullback_low
+                state.pullback_high = final_pullback_high
+                state.event = "PULLBACK_CONFIRMED"
+                pullback_confirm_idx = i
+                plotter.plot_single_state(state)
                 break
+
 
     else:
         raise ValueError("Pullback not detected")
 
-    print(f"PULLBACK CONFIRMED")
-    print(f"Pullback High : {pullback_high}")
-    print(f"Pullback Low  : {pullback_low}")
+    print(f"PULLBACK CONFIRMED at index {pullback_confirm_idx}")
+    print(f"Pullback High : {final_pullback_high}")
+    print(f"Pullback Low  : {final_pullback_low}")
 
-    # --------------------------------------------------
-    # STEP 4 — WAIT FOR 10D HIGH / LOW BREAK
-    # --------------------------------------------------
-    for j in range(i + 1, len(df)):
+# --------------------------------------------------
+# STEP 4 — WAIT FOR 10D HIGH / LOW BREAK
+# --------------------------------------------------
+    for j in range(pullback_confirm_idx + 1, len(df)):
         candle = df.iloc[j]
         t = df.index[j]
+        state = CandleState(
+            index=j, time=t, temp_trend=temp_trend, pullback_active=False,
+            protected_level=None, seed_high=seed_high, seed_low=seed_low,
+            pullback_low=final_pullback_low, pullback_high=final_pullback_high,
+            event=None, pullback_start_idx=pullback_start_idx, seed_complete=True
+        )
+        states.append(state)
+        plotter.states.append(state)
 
-        # -------- BULLISH TEMP TREND --------
         if temp_trend == "BULLISH":
-
-            # BOS → bullish confirmed
             if candle["high"] > seed_high:
                 print(f"BOS ↑ at {t}")
-                refined_df = df[df.index >= df[df["low"] == pullback_low].index[0]]
-                return refined_df, "BULLISH", t
-
-            # CHOCH → bearish
+                state.event = "BOS"
+                plotter.plot_single_state(state)
+                refined_df = df[df.index >= df.index[pullback_confirm_idx]]
+                
+                # 🔥 KEEP OPEN AFTER BOS!
+                print("🎉 BOS CONFIRMED! Plot stays open FOREVER!")
+                print("📊 Close window → continues to Market Structure phase")
+                plt.ioff()
+                plt.show(block=True)
+                return refined_df, "BULLISH", t, j, states
+            
             if candle["low"] < seed_low:
                 print(f"CHOCH ↓ at {t}")
-                refined_df = df[df.index >= df[df["high"] == pullback_high].index[0]]
-                return refined_df, "BEARISH", t
-
-        # -------- BEARISH TEMP TREND --------
-        else:
-
-            # BOS → bearish confirmed
+                state.event = "CHOCH"
+                plotter.plot_single_state(state)
+                refined_df = df[df.index >= df.index[pullback_confirm_idx]]
+                
+                print("🎉 CHOCH CONFIRMED! Plot stays open FOREVER!")
+                print("📊 Close window → continues...")
+                plt.ioff()
+                plt.show(block=True)
+                return refined_df, "BEARISH", t, j, states
+        
+        else:  # BEARISH
             if candle["low"] < seed_low:
                 print(f"BOS ↓ at {t}")
-                refined_df = df[df.index >= df[df["high"] == pullback_high].index[0]]
-                return refined_df, "BEARISH", t
-
-            # CHOCH → bullish
+                state.event = "BOS"
+                plotter.plot_single_state(state)
+                refined_df = df[df.index >= df.index[pullback_confirm_idx]]
+                
+                print("🎉 BOS CONFIRMED! Plot stays open FOREVER!")
+                plt.ioff()
+                plt.show(block=True)
+                return refined_df, "BEARISH", t, j, states
+            
             if candle["high"] > seed_high:
                 print(f"CHOCH ↑ at {t}")
-                refined_df = df[df.index >= df[df["low"] == pullback_low].index[0]]
-                return refined_df, "BULLISH", t
+                state.event = "CHOCH"
+                plotter.plot_single_state(state)
+                refined_df = df[df.index >= df.index[pullback_confirm_idx]]
+                
+                print("🎉 CHOCH CONFIRMED! Plot stays open FOREVER!")
+                plt.ioff()
+                plt.show(block=True)
+                return refined_df, "BULLISH", t, j, states
 
-    raise ValueError("No break of 10-day high or low detected")
+    # Only reaches here if NO break
+    print("🎬 NO BREAK - Plot stays open...")
+    plt.ioff()
+    plt.show(block=True)
+    raise ValueError("No break detected")
