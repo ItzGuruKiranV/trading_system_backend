@@ -11,12 +11,53 @@ from engine.poi_detection import detect_pois_from_swing
 from engine.mins_choch import process_structure_and_return_last_swing
 from engine.plan_trade_5mins import plan_trade_from_choch_leg
 
+# =====================================================
+# 🔐 GLOBAL EVENT INDEX GUARD  (STRICTLY INCREASING)
+# =====================================================
+EVENT_LOG: list[swing_state] = []
+last_logged_index = -1
+
+# =====================================================
+# 🔐 CENTRALIZED EVENT LOGGER
+# =====================================================
+def log_event(idx, t, trend, event,
+              swing_high=None,
+              swing_low=None,
+              active_poi=None,
+              trade_details=None,
+              rr_ratio=None):
+    
+    global last_logged_index
+
+    # 🔹 Prevent duplicate events of same type on same candle
+    for e in EVENT_LOG:
+        if e["index"] == idx and e["event"] == event:
+            return
+    if idx <= last_logged_index:
+        return
+    
+
+    state = swing_state(
+        index=idx,
+        time=t,
+        trend=trend,
+        event=event,
+        swing_high=swing_high,    # ✅ Correct
+        swing_low=swing_low,      # ✅ Correct
+        active_poi=active_poi,    # ✅ If it needs underscore
+        trade_details=trade_details,
+        rr_ratio=rr_ratio,
+        liquidity_grabbed=False
+    )
+    EVENT_LOG.append(state)
+    last_logged_index = idx
+
+
 def market_structure_mapping_dynamic(
     df_4h: pd.DataFrame,
     df_5m: pd.DataFrame,
     trend: str,
     bos_time,
-    plotter: swings_plotter,  # ← ADD PLOTTER PARAM
     pullback_pct: float = 0.35,
     min_pullback_candles: int = 5,
     depth: int = 0,
@@ -26,10 +67,9 @@ def market_structure_mapping_dynamic(
     indent = "    " * depth
     trend = trend.upper()
     print(f"\n{indent}🚀 MARKET STRUCTURE START")
-        # 🔥 INITIAL STATE
-    initial_state = swing_state(index=0, time=df_4h.index[0], trend=trend)
-    plotter.plot_single_state(initial_state)
-
+        
+    # 🔥 INITIAL STATE — LOG SAFELY AT INDEX 0
+    log_event(idx=0, t=df_4h.index[0], trend=trend, event="start")
 
     if depth >= max_depth:
         print(f"{indent}⛔ Max recursion depth reached")
@@ -93,16 +133,18 @@ def market_structure_mapping_dynamic(
                 print(f"Swing High : {swing_high}")
                 print(f"Swing Low  : {swing_low}")
                 print(f"Time       : {pullback_time}")
-                # 🔥 SWING CONFIRMED → PLOT!
-                swing_state_obj = swing_state(
-                    index=df_4h.index.get_loc(pullback_time),
-                    time=pullback_time,
+                # 🔥 SWING CONFIRMED — LOG HERE
+                log_event(
+                    idx=df_4h.index.get_loc(pullback_time),
+                    t=pullback_time,
                     trend=trend,
+                    event="swing_confirmed",
                     swing_high=swing_high,
-                    swing_low=swing_low,
-                    event="swing_confirmed"
+                    swing_low=swing_low
                 )
-                plotter.plot_single_state(swing_state_obj)
+
+
+                
 
                 break
 
@@ -133,15 +175,17 @@ def market_structure_mapping_dynamic(
                 print(f"Swing Low  : {swing_low}")
                 print(f"Swing High : {swing_high}")
                 print(f"Time       : {pullback_time}")
-                swing_state_obj = swing_state(
-                    index=df_4h.index.get_loc(pullback_time),
-                    time=pullback_time,
+                # 🔥 SWING CONFIRMED — LOG HERE
+                log_event(
+                    idx=df_4h.index.get_loc(pullback_time),
+                    t=pullback_time,
                     trend=trend,
+                    event="swing_confirmed",
                     swing_high=swing_high,
-                    swing_low=swing_low,
-                    event="swing_confirmed"
+                    swing_low=swing_low
                 )
-                plotter.plot_single_state(swing_state_obj)
+
+
                 break  # ← Keep this
 
 
@@ -162,15 +206,16 @@ def market_structure_mapping_dynamic(
     print(f"{indent}🎯 POIs detected: {len(pois)}")
 
     # 🔥 POI DETECTED → PLOT!
+    # 🔥 POI DETECTED — LOG HERE
     if pois:
-        poi_state = swing_state(
-            index=df_4h.index.get_loc(pullback_time),
-            time=pullback_time,
+        log_event(
+            idx=df_4h.index.get_loc(pullback_time),
+            t=pullback_time,
             trend=trend,
-            active_poi=pois[0],
-            event="poi_detected"
+            event="poi_detected",
+            active_poi=pois[0]
         )
-        plotter.plot_single_state(poi_state)
+
 
     # ==================================================
     # PHASE 4 — POST-PULLBACK MONITORING (5M DRIVEN)
@@ -216,25 +261,30 @@ def market_structure_mapping_dynamic(
                     trade_details["status"] = "OPEN"
                     trade_details["entry_time"] = t5
                     print(f"{indent}🟢 ENTRY FILLED @ {trade_details['entry']} @ {t5}")
-                    entry_state = swing_state(
-                        index=df_5m.index.get_loc(t5),
-                        time=t5,
+                    # 🔥 ENTRY FILLED — LOG HERE
+                    log_event(
+                        idx=df_5m.index.get_loc(t5),
+                        t=t5,
                         trend=trend,
+                        event="entry_filled",
                         trade_details=trade_details,
-                        event="entry_filled"
                     )
-                    plotter.plot_single_state(entry_state)
+
                     # Continue to check TP/SL in same iteration
                 else:
                     # Entry not filled - check if TP hit without entry
                     if trend == "BULLISH":
                         if c5.high >= trade_details["tp"]:
                             print(f"{indent}🟩 TP HIT WITHOUT ENTRY → TRADE INVALID")
-                            # 🔥 TP WITHOUT ENTRY → PLOT!
-                            tp_no_entry_state = swing_state(index=df_5m.index.get_loc(t5), 
-                                                            time=t5, trend=trend, 
-                                                            event="tp_no_entry")
-                            plotter.plot_single_state(tp_no_entry_state)
+                            # 🔥 TP WITHOUT ENTRY — LOG HERE
+                            log_event(
+                                idx=df_5m.index.get_loc(t5),
+                                t=t5,
+                                trend=trend,
+                                event="tp_no_entry",
+                                trade_details=trade_details,
+                            )
+
                             # 🔥 RESET EVERYTHING
                             trade_active = False
                             trade_details = None
@@ -247,11 +297,15 @@ def market_structure_mapping_dynamic(
                     else:
                         if c5.low <= trade_details["tp"]:
                             print(f"{indent}🟩 TP HIT WITHOUT ENTRY → TRADE INVALID")
-                             # 🔥 TP WITHOUT ENTRY → PLOT!
-                            tp_no_entry_state = swing_state(index=df_5m.index.get_loc(t5), 
-                                                            time=t5, trend=trend, 
-                                                            event="tp_no_entry")
-                            plotter.plot_single_state(tp_no_entry_state)
+                            # 🔥 TP WITHOUT ENTRY — LOG HERE
+                            log_event(
+                                idx=df_5m.index.get_loc(t5),
+                                t=t5,
+                                trend=trend,
+                                event="tp_no_entry",
+                                trade_details=trade_details,
+                            )
+
                             # 🔥 RESET EVERYTHING
                             trade_active = False
                             trade_details = None
@@ -269,9 +323,15 @@ def market_structure_mapping_dynamic(
 
                     if c5.low <= trade_details["sl"]:
                         print(f"{indent}🟥 SL HIT")
-                        # 🔥 SL HIT → FINAL RED STAR!
-                        sl_state =  swing_state(index=df_5m.index.get_loc(t5), time=t5, trend=trend, event="sl_hit")
-                        plotter.plot_single_state(sl_state)
+                        # 🔥 SL HIT — LOG HERE
+                        log_event(
+                                idx=df_5m.index.get_loc(t5),
+                                t=t5,
+                                trend=trend,
+                                event="sl_hit",
+                                trade_details=trade_details,
+                            )
+
                         trade_active = False
                         trade_details = None
                         entry_filled = False
@@ -284,8 +344,15 @@ def market_structure_mapping_dynamic(
                     # TAKE PROFIT
                     elif c5.high >= trade_details["tp"]:
                         print(f"{indent}🟩 TP HIT")
-                        tp_state = swing_state(index=df_5m.index.get_loc(t5), time=t5, trend=trend, event="tp_hit")
-                        plotter.plot_single_state(tp_state)
+                        # 🔥 TP HIT — LOG HERE
+                        log_event(
+                            idx=df_5m.index.get_loc(t5),
+                            t=t5,
+                            trend=trend,
+                            event="tp_hit"
+                        )
+
+
                         trade_active = False
                         trade_details = None
                         entry_filled = False
@@ -299,9 +366,14 @@ def market_structure_mapping_dynamic(
 
                     if c5.high >= trade_details["sl"]:
                         print(f"{indent}🟥 SL HIT")
-                        # 🔥 SL HIT → FINAL RED STAR!
-                        sl_state = swing_state(index=df_5m.index.get_loc(t5), time=t5, trend=trend, event="sl_hit")
-                        plotter.plot_single_state(sl_state)
+                        # 🔥 SL HIT — LOG HERE
+                        log_event(
+                            idx=df_5m.index.get_loc(t5),
+                            t=t5,
+                            trend=trend,
+                            event="sl_hit"
+                        )
+
                         trade_active = False
                         trade_details = None
                         entry_filled = False
@@ -314,8 +386,14 @@ def market_structure_mapping_dynamic(
                     # TAKE PROFIT
                     elif c5.low <= trade_details["tp"]:
                         print(f"{indent}🟩 TP HIT")
-                        tp_state = swing_state(index=df_5m.index.get_loc(t5), time=t5, trend=trend, event="tp_hit")
-                        plotter.plot_single_state(tp_state)
+                        # 🔥 TP HIT — LOG HERE
+                        log_event(
+                            idx=df_5m.index.get_loc(t5),
+                            t=t5,
+                            trend=trend,
+                            event="tp_hit"
+                        )
+
                         trade_active = False
                         trade_details = None
                         entry_filled = False
@@ -334,13 +412,14 @@ def market_structure_mapping_dynamic(
             if trend == "BULLISH" and c5.close < swing_low:
                 print(f"{indent}🟥 CHOCH @ {t5} in 4h")
 
-                choch_state = swing_state(
-                    index=df_5m.index.get_loc(t5),
-                    time=t5,
+                # 🔥 CHOCH — LOG HERE
+                log_event(
+                    idx=df_5m.index.get_loc(t5),
+                    t=t5,
                     trend=trend,
                     event="choch"
-                        )
-                plotter.plot_single_state(choch_state)
+                )
+
 
 
                 # trim before swing_high
@@ -352,20 +431,19 @@ def market_structure_mapping_dynamic(
                     df_5m=df_5m_new,
                     trend="BEARISH",
                     bos_time=t5,
-                    plotter=plotter,
                     depth=depth + 1,
                 )
 
             if trend == "BEARISH" and c5.close > swing_high:
                 print(f"{indent}🟥 CHOCH @ {t5} in 4h")
 
-                choch_state = swing_state(
-                    index=df_5m.index.get_loc(t5),
-                    time=t5,
+                # 🔥 CHOCH — LOG HERE
+                log_event(
+                    idx=df_5m.index.get_loc(t5),
+                    t=t5,
                     trend=trend,
                     event="choch"
                 )
-                plotter.plot_single_state(choch_state)
 
                 df_4h_new = df_4h.loc[df_4h.index >= pullback_time]
                 df_5m_new = df_5m.loc[df_5m.index >= pullback_time]
@@ -375,7 +453,6 @@ def market_structure_mapping_dynamic(
                     df_5m=df_5m_new,
                     trend="BULLISH",
                     bos_time=t5,
-                    plotter=plotter,
                     depth=depth + 1,
                 )
 
@@ -387,13 +464,15 @@ def market_structure_mapping_dynamic(
             if trend == "BULLISH" and c5.close > swing_high:
                 print(f"{indent}🟦 BOS WITHOUT POI @ {t5} in 4h")
 
-                bos_state = swing_state(
-                    index=df_5m.index.get_loc(t5),
-                    time=t5,
+                # 🔥 BOS — LOG HERE
+                log_event(
+                    idx=df_5m.index.get_loc(t5),
+                    t=t5,
                     trend=trend,
                     event="bos"
                 )
-                plotter.plot_single_state(bos_state)
+
+
 
 
                 # lowest low from swing_high → BOS
@@ -407,25 +486,25 @@ def market_structure_mapping_dynamic(
                     df_5m=df_5m_new,
                     trend="BULLISH",
                     bos_time=t5,
-                    plotter=plotter,  
                     depth=depth + 1,
                 )
 
             if trend == "BEARISH" and c5.close < swing_low:
                 print(f"{indent}🟦 BOS WITHOUT POI @ {t5} in 4h")
 
-                bos_state = swing_state(
-                    index=df_5m.index.get_loc(t5),
-                    time=t5,
+                # 🔥 BOS — LOG HERE
+                log_event(
+                    idx=df_5m.index.get_loc(t5),
+                    t=t5,
                     trend=trend,
                     event="bos"
                 )
-                plotter.plot_single_state(bos_state)
+
+
 
 
                 range_high = df_5m.loc[pullback_time:t5]["high"].max()
 
-                range_high = df_5m.loc[pullback_time:t5]["high"].max()
                 df_4h_new = df_4h.loc[df_4h["high"] <= range_high]
                 df_5m_new = df_5m.loc[df_5m["high"] <= range_high]
 
@@ -434,7 +513,6 @@ def market_structure_mapping_dynamic(
                     df_5m=df_5m_new,
                     trend="BEARISH",
                     bos_time=t5,
-                    plotter=plotter,  # ← ADD PLOTTER
                     depth=depth + 1,
                 )
         # --------------------------------------------------
@@ -483,15 +561,15 @@ def market_structure_mapping_dynamic(
                 if invalidation_level is not None and c5.low < invalidation_level:
                     print(f"{indent}❌ POI INVALIDATED @ {t5}")
                     print(f"{indent}   Level broken: {invalidation_level}")
-                    # 🔥 POI INVALIDATED → PLOT!
-                    poi_invalidated_state = swing_state(
-                        index=df_5m.index.get_loc(t5),
-                        time=t5,
+                    # 🔥 POI INVALIDATED — LOG HERE
+                    log_event(
+                        idx=df_5m.index.get_loc(t5),
+                        t=t5,
                         trend=trend,
-                        active_poi=active_poi,
-                        event="poi_invalidated"
+                        event="poi_invalidated",
+                        active_poi=active_poi
                     )
-                    plotter.plot_single_state(poi_invalidated_state)
+
 
                     pois.pop(0)
                     poi_active = False
@@ -532,14 +610,15 @@ def market_structure_mapping_dynamic(
                     print(f"{indent}   Level broken: {invalidation_level}")
 
                     # 🔥 POI INVALIDATED → PLOT!
-                    poi_invalidated_state = swing_state(
-                        index=df_5m.index.get_loc(t5),
-                        time=t5,
+                    # 🔥 POI INVALIDATED — LOG HERE
+                    log_event(
+                        idx=df_5m.index.get_loc(t5),
+                        t=t5,
                         trend=trend,
-                        active_poi=active_poi,
-                        event="poi_invalidated"
+                        event="poi_invalidated",
+                        active_poi=active_poi
                     )
-                    plotter.plot_single_state(poi_invalidated_state)
+
 
                     pois.pop(0)
                     poi_active = False
@@ -588,14 +667,15 @@ def market_structure_mapping_dynamic(
                 print(f"{indent}🔥 POI TAPPED ({poi_type}) @ {t5}")
 
                 # 🔥 POI TAPPED → PLOT!
-                poi_tapped_state = swing_state(
-                    index=df_5m.index.get_loc(t5),
-                    time=t5,
+                # 🔥 POI TAPPED — LOG HERE
+                log_event(
+                    idx=df_5m.index.get_loc(t5),
+                    t=t5,
                     trend=trend,
-                    active_poi=active_poi,
-                    event="poi_tapped"
+                    event="poi_tapped",
+                    active_poi={"poi_active": poi_active, "poi_type": poi_type}
                 )
-                plotter.plot_single_state(poi_tapped_state)
+
 
 
                 # 🔹 CALL 5M STRUCTURE FUNCTION HERE
@@ -615,14 +695,15 @@ def market_structure_mapping_dynamic(
                     protected_5m_point = None
                     continue
                 print(f"{indent}✅ 5M Protected Point: {protected_5m_point}")
-                # 🔥 5M STRUCTURE READY → PLOT!
-                m5_ready_state = swing_state(
-                    index=df_5m.index.get_loc(t5),
-                    time=t5,
+                # 🔥 5M STRUCTURE READY — LOG HERE
+                log_event(
+                    idx=df_5m.index.get_loc(t5),
+                    t=t5,
                     trend=trend,
                     event="m5_structure_ready"
                 )
-                plotter.plot_single_state(m5_ready_state)
+
+
             else:
                 continue
 
@@ -641,13 +722,15 @@ def market_structure_mapping_dynamic(
                     protected_5m_point = None
 
                     # 🔥 5M CHOCH → PLOT!
-                    m5_choch_state = swing_state(
-                        index=df_5m.index.get_loc(t5),
-                        time=t5,
+                    # 🔥 5M CHOCH — LOG HERE
+                    log_event(
+                        idx=df_5m.index.get_loc(t5),
+                        t=t5,
                         trend=trend,
                         event="m5_choch"
                     )
-                    plotter.plot_single_state(m5_choch_state)
+
+
                 elif c5.close < c5.open:
                     opp_pullback_count += 1
                 elif c5.low < protected_5m_point and opp_pullback_count < 2:
@@ -659,13 +742,15 @@ def market_structure_mapping_dynamic(
                     opp_pullback_count = 0
 
                     # 🔥 5M BOS → PLOT!
-                    m5_bos_state = swing_state(
-                        index=df_5m.index.get_loc(t5),
-                        time=t5,
+                    # 🔥 5M BOS — LOG HERE
+                    log_event(
+                        idx=df_5m.index.get_loc(t5),
+                        t=t5,
                         trend=trend,
                         event="m5_bos"
                     )
-                    plotter.plot_single_state(m5_bos_state)
+
+
 
             else:
                 # opp_trend is BULLISH, so protected_5m_point is a SWING LOW
@@ -678,13 +763,15 @@ def market_structure_mapping_dynamic(
                     protected_5m_point = None
 
                     # 🔥 5M CHOCH → PLOT!
-                    m5_choch_state = swing_state(
-                        index=df_5m.index.get_loc(t5),
-                        time=t5,
+                    # 🔥 5M CHOCH — LOG HERE
+                    log_event(
+                        idx=df_5m.index.get_loc(t5),
+                        t=t5,
                         trend=trend,
                         event="m5_choch"
                     )
-                    plotter.plot_single_state(m5_choch_state)
+
+
                 elif c5.close > c5.open:
                     opp_pullback_count += 1
                 elif c5.high > protected_5m_point and opp_pullback_count < 2:
@@ -695,13 +782,15 @@ def market_structure_mapping_dynamic(
                     protected_5m_point = c5.low
                     opp_pullback_count = 0
                     # 🔥 5M BOS → PLOT!
-                    m5_bos_state = swing_state(
-                        index=df_5m.index.get_loc(t5),
-                        time=t5,
+                    # 🔥 5M BOS — LOG HERE
+                    log_event(
+                        idx=df_5m.index.get_loc(t5),
+                        t=t5,
                         trend=trend,
                         event="m5_bos"
                     )
-                    plotter.plot_single_state(m5_bos_state)
+
+
         # --------------------------------------------------
         # 6️⃣ 5M CHOCH → TRADE (EXECUTE ONCE, THEN MANAGE)
         # --------------------------------------------------
@@ -740,26 +829,29 @@ def market_structure_mapping_dynamic(
                 if trend == "BULLISH" and trade["tp"] >= swing_high:
                     print(f"{indent}❌ TP ABOVE SWING HIGH → TRADE REJECTED")
                     # 🔥 TRADE REJECTED → PLOT!
-                    trade_rejected_state = swing_state(
-                        index=df_5m.index.get_loc(t5),
-                        time=t5,
+                    # 🔥 TRADE REJECTED — LOG HERE
+                    log_event(
+                        idx=df_5m.index.get_loc(t5),
+                        t=t5,
                         trend=trend,
                         event="trade_rejected_tp_high"
                     )
-                    plotter.plot_single_state(trade_rejected_state)
+
+
                     choch_validated = False
                     continue
 
                 if trend == "BEARISH" and trade["tp"] <= swing_low:
                     print(f"{indent}❌ TP BELOW SWING LOW → TRADE REJECTED")
-                    # 🔥 TRADE REJECTED → PLOT!
-                    trade_rejected_state = swing_state(
-                        index=df_5m.index.get_loc(t5),
-                        time=t5,
+                    # 🔥 TRADE REJECTED — LOG HERE
+                    log_event(
+                        idx=df_5m.index.get_loc(t5),
+                        t=t5,
                         trend=trend,
                         event="trade_rejected_tp_low"
                     )
-                    plotter.plot_single_state(trade_rejected_state)
+
+
                     choch_validated = False
                     continue
 
@@ -779,15 +871,16 @@ def market_structure_mapping_dynamic(
                 print(f"{indent}✅ TRADE STORED → WAITING FOR SL / TP")
                 # 🔥 TRADE ENTRY → 1:3 R:R LINES!
                 rr_ratio = abs((trade_details["tp"] - trade_details["entry"]) / (trade_details["entry"] - trade_details["sl"]))
-                trade_entry_state = swing_state(
-                    index=df_5m.index.get_loc(t5),
-                    time=t5,
+                # 🔥 TRADE ENTRY — LOG HERE
+                log_event(
+                    idx=df_5m.index.get_loc(t5),
+                    t=t5,
                     trend=trend,
+                    event="trade_entry",
                     trade_details=trade_details,
-                    rr_ratio=rr_ratio,
-                    event="trade_entry"
+                    rr_ratio=rr_ratio
                 )
-                plotter.plot_single_state(trade_entry_state)
+
 
             else:
                 print(f"{indent}❌ Trade logic rejected")

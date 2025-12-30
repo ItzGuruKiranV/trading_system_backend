@@ -141,21 +141,16 @@ def main():
         if refined_4h_df.empty or refined_5m_df.empty:
             raise ValueError("Refined dataframes are empty")
 
-        # 🔥 DYNAMIC SWINGS PLOTTER
-        from debug.swings_plot import swings_plotter
+        # Run logging phase
+        market_structure_mapping_dynamic(df_4h=refined_4h_df, df_5m=refined_5m_df, trend=trend, bos_time=bos_time)
+
+        # Plotting phase  
+        from swings_detect import EVENT_LOG
+        from swings_plot import swings_plotter  # Import the log
         plotter = swings_plotter(refined_4h_df)
-        
-        # 🚀 FULL DYNAMIC STRUCTURE MAPPING
-        market_structure_mapping_dynamic(
-            df_4h=refined_4h_df,
-            df_5m=refined_5m_df,
-            trend=trend,
-            bos_time=bos_time,
-            plotter=plotter,  # ← NEW PLOTTER PARAM
-            pullback_pct=0.35,
-            min_pullback_candles=5
-        )
-        print("✅ DYNAMIC SWINGS COMPLETE!")
+        for state in EVENT_LOG:
+            plotter.plot_single_state(state)
+
 
     except Exception as e:
         print(f"\n❌ Error in dynamic swings mapping: {e}")

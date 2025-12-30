@@ -27,9 +27,9 @@ class swing_state:
     time: pd.Timestamp
     trend: str
     event: Optional[str] = None
-    active_poi: Optional[Dict] = None
     swing_high: Optional[float] = None
     swing_low: Optional[float] = None
+    active_poi: Optional[Dict] = None
     trade_details: Optional[Dict] = None
     rr_ratio: Optional[float] = None
     liquidity_grabbed: bool = False
@@ -65,7 +65,7 @@ class swings_plotter:
         # Wick
         self.ax.plot([x, x], [l, h], color=color, lw=1, zorder=1)
         
-        # Body - FIXED: Proper Rectangle constructor
+        # Body
         body = Rectangle(
             xy=(x - 0.3, min(o, c)),
             width=0.6,
@@ -78,7 +78,6 @@ class swings_plotter:
 
     # -------------------------
     def draw_event(self, x: int, y: float, label: str):
-        # FIXED: Complete scatter and text calls
         self.ax.scatter(
             x, y,
             s=300,
@@ -97,18 +96,21 @@ class swings_plotter:
         )
 
     # -------------------------
-    def draw_poi(self, poi: Dict):
-        low = poi.get("price_low", poi.get("low"))
-        high = poi.get("price_high", poi.get("high"))
-        self.ax.axhspan(
-            low, high,
-            color="#ffaa00",
-            alpha=0.25,
-            zorder=0
-        )
+    def draw_poi(self, poi):
+        # Handle both dict and swing_state
+        if isinstance(poi, dict):
+            low = poi.get('price_low') or poi.get('low')
+            high = poi.get('price_high') or poi.get('high')
+        else:  # swing_state or other object
+            low = getattr(poi, 'price_low', None) or getattr(poi, 'low', None)
+            high = getattr(poi, 'price_high', None) or getattr(poi, 'high', None)
+        
+        if low is not None and high is not None:
+            self.ax.axhspan(low, high, color='#ffaa00', alpha=0.25, zorder=0)
+
 
     # -------------------------
-    def plot_single_state(self, state: swing_state):
+    def plot_single_state(self, state: swing_state, **kwargs):
         if not self.initialized:
             self.initialize_plot()
         
@@ -124,7 +126,7 @@ class swings_plotter:
         
         row = self.df_4h.iloc[idx]
         
-        # 2️⃣ Structure markers - FIXED: Complete scatter calls
+        # 2️⃣ Structure markers
         if state.swing_high is not None:
             self.ax.scatter(
                 idx, state.swing_high,
@@ -144,20 +146,27 @@ class swings_plotter:
                 zorder=8
             )
         
-        # 3️⃣ POI (draw once) - FIXED: Safe POI ID handling
-        if state.active_poi:
-            poi_low = state.active_poi.get("price_low")
-            poi_high = state.active_poi.get("price_high")
+        # 3️⃣ POI (draw once) - support extra dict
+        poi_info = kwargs.get("extra", {}).get("active_poi", state.active_poi)
+        if poi_info:
+            poi_low = poi_info.get("price_low")
+            poi_high = poi_info.get("price_high")
             if poi_low is not None and poi_high is not None:
                 poi_id = (poi_low, poi_high)
                 if poi_id not in self.drawn_pois:
-                    self.draw_poi(state.active_poi)
+                    self.draw_poi(poi_info)
                     self.drawn_pois.add(poi_id)
         
         # 4️⃣ Event marker
         if state.event:
             y = row["close"]
-            self.draw_event(idx, y, state.event.upper())
+            label = state.event.upper()
+            if state.event in ["trade_entry", "trade_rejected_tp_high", "trade_rejected_tp_low",
+                               "tp_hit", "sl_hit", "entry_filled"]:
+                self.ax.scatter(idx, y, s=300, marker="*", c="cyan", edgecolors="black", zorder=12)
+                self.ax.text(idx, y, f" {label}", fontsize=9, color="cyan", va="bottom", zorder=13)
+            else:
+                self.draw_event(idx, y, label)
         
         # 5️⃣ X-axis camera ONLY
         self.ax.set_xlim(max(0, idx - 120), idx + 10)
