@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from journal.router import router as journal_router
 from calculator.router import router as calculator_router
 from candles.router import router as candles_router
+from news.router import router as news_router
 
 app = FastAPI(title="Trading Backend")
 
@@ -17,6 +18,7 @@ app.add_middleware(
 app.include_router(journal_router)
 app.include_router(calculator_router)
 app.include_router(candles_router)
+app.include_router(news_router)
 
 @app.get("/")
 def root():
