@@ -67,6 +67,7 @@ def detect_pois_from_swing(
                 continue
 
         pois.append({
+            "time": df.index[i],
             "type": "OB",
             "trend": trend.upper(),
             "price_low": float(ob_low),
@@ -129,6 +130,7 @@ def detect_pois_from_swing(
             continue
 
         pois.append({
+            "time": df.index[i],
             "type": "LIQ",
             "trend": trend.upper(),
             "price_low": float(liq_low) if is_bull else None,

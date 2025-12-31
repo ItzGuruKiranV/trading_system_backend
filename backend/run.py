@@ -29,7 +29,7 @@ from engine.resample import resample_to_4h , resample_to_5m
 from engine.trend_seed import detect_seed
 from engine_2.resample import resample_to_30m  
 from engine_2.structure_mapping_30m import market_structure_mapping_30m
-from engine.swings_detect import market_structure_mapping_dynamic
+from engine.swings_detect import market_structure_mapping
 
 # ==================================================
 # FIXED INPUT FILE
@@ -142,28 +142,33 @@ def main():
             raise ValueError("Refined dataframes are empty")
 
         # Run logging phase
-        market_structure_mapping_dynamic(df_4h=refined_4h_df, df_5m=refined_5m_df, trend=trend, bos_time=bos_time)
+        event_log=market_structure_mapping(df_4h=refined_4h_df, df_5m=refined_5m_df, trend=trend, bos_time=bos_time)
+        print("\n===== EVENT LOG DEBUG =====")
+        print("Total events:", len(event_log))  
 
-        # Plotting phase  
-        from engine.swings_detect import EVENT_LOG
-        from debug.swings_plot import swings_plotter  # Import the log
-        plotter = swings_plotter(refined_4h_df)
-        for state in EVENT_LOG:
-            plotter.plot_single_state(state)
-
-
+        from debug.swings_plot_4h import plot_swings_and_events_4h
+        from debug.swings_plot_5m import plot_swings_and_events_5m
+        plot_swings_and_events_4h(
+            df_4h=refined_4h_df,
+            event_log=event_log
+        )
+        plot_swings_and_events_5m(
+            df_5m=refined_5m_df,
+            event_log=event_log
+        )
+   
     except Exception as e:
-        print(f"\n❌ Error in dynamic swings mapping: {e}")
-
-
-
+        print(f"\n❌ Error in swings mapping: {e}")
+            
+  
+"""
     print("\n[Phase 1] Running rule-based structure mapping... 2 ")
     try:
         # Sanity checks
         if refined_4h_df.empty or refined_5m_df.empty or refined_30m_df.empty:
             raise ValueError("Refined dataframes are empty")
 
-        # --------------------------------------------------
+        # -------------------------
         # CALL STRUCTURE LOGIC WITH 30M ADDED
         # --------------------------------------------------
         market_structure_mapping_30m(
@@ -176,11 +181,7 @@ def main():
     except Exception as e:
         print(f"\n❌ Error in structure mapping: {e}")
 
-
-
-
-
-
+"""
 
 
 # ==================================================

@@ -127,7 +127,7 @@ class SeedPlotter:
             self.ax.set_xlim(0, 10)
             self.ax.set_ylim(0, 1)
             plt.draw()
-            plt.pause(1.5)
+            plt.pause(0.8)
             
             # PERSISTENT ANIMATION (batch mode)
             for state in self.states:
