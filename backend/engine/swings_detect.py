@@ -509,35 +509,14 @@ def market_structure_mapping(
                     trade_details["status"] = "OPEN"
                     trade_details["entry_time"] = t5
                     print(f"{indent}🟢 ENTRY FILLED @ {trade_details['entry']} @ {t5}")
-                    # 🔥 ENTRY FILLED — LOG HERE
-                    log_event(
-                        idx=df_5m.index.get_loc(t5),
-                        t=t5,
-                        trend=trend,
-                        event="entry_filled",
-                        validation_tf="5m",
-                        trade_details=trade_details,               
-                        filled_price=trade_details["entry"],
-                        fill_low=c5.low,
-                        fill_high=c5.high,
-                    )
-
+                    
                     # Continue to check TP/SL in same iteration
                 else:
                     # Entry not filled - check if TP hit without entry
                     if trend == "BULLISH":
                         if c5.high >= trade_details["tp"]:
                             print(f"{indent}🟩 TP HIT WITHOUT ENTRY → TRADE INVALID")
-                            # 🔥 TP WITHOUT ENTRY — LOG HERE
-                            log_event(
-                                idx=df_5m.index.get_loc(t5),
-                                t=t5,
-                                trend=trend,
-                                event="trade_invalid_tp_before_entry",
-                                trade_details=trade_details,
-                                validation_tf="5m"
-                            )
-
+                            
                             # 🔥 RESET EVERYTHING
                             trade_active = False
                             trade_details = None
@@ -550,16 +529,7 @@ def market_structure_mapping(
                     else:
                         if c5.low <= trade_details["tp"]:
                             print(f"{indent}🟩 TP HIT WITHOUT ENTRY → TRADE INVALID")
-                            # 🔥 TP WITHOUT ENTRY — LOG HERE
-                            log_event(
-                                idx=df_5m.index.get_loc(t5),
-                                t=t5,
-                                trend=trend,
-                                event="trade_invalid_tp_before_entry",
-                                trade_details=trade_details,
-                                validation_tf="5m"
-                            )
-
+                            
                             # 🔥 RESET EVERYTHING
                             trade_active = False
                             trade_details = None
@@ -577,17 +547,7 @@ def market_structure_mapping(
 
                     if c5.low <= trade_details["sl"]:
                         print(f"{indent}🟥 SL HIT")
-                        # 🔥 SL HIT — LOG HERE
-                        log_event(
-                            idx=df_5m.index.get_loc(t5),
-                            t=t5,
-                            trend=trend,
-                            event="sl_hit",
-                            validation_tf="5m",
-                            trade_details=trade_details,
-                            exit_price=trade_details["sl"]
-                        )
-
+                        
                         trade_active = False
                         trade_details = None
                         entry_filled = False
@@ -600,17 +560,7 @@ def market_structure_mapping(
                     # TAKE PROFIT
                     elif c5.high >= trade_details["tp"]:
                         print(f"{indent}🟩 TP HIT")
-                        # 🔥 TP HIT — LOG HERE
-                        log_event(
-                            idx=df_5m.index.get_loc(t5),
-                            t=t5,
-                            trend=trend,
-                            event="tp_hit",
-                            validation_tf="5m",
-                            trade_details=trade_details,    
-                            exit_price=trade_details["tp"],
-                        )
-
+                        
 
                         trade_active = False
                         trade_details = None
@@ -626,16 +576,7 @@ def market_structure_mapping(
                     if c5.high >= trade_details["sl"]:
                         print(f"{indent}🟥 SL HIT")
                         # 🔥 SL HIT — LOG HERE
-                        log_event(
-                            idx=df_5m.index.get_loc(t5),
-                            t=t5,
-                            trend=trend,
-                            event="sl_hit",
-                            validation_tf="5m",
-                            trade_details=trade_details,
-                            exit_price=trade_details["sl"]
-                        )
-
+                        
                         trade_active = False
                         trade_details = None
                         entry_filled = False
@@ -648,16 +589,7 @@ def market_structure_mapping(
                     # TAKE PROFIT
                     elif c5.low <= trade_details["tp"]:
                         print(f"{indent}🟩 TP HIT")
-                        # 🔥 TP HIT — LOG HERE
-                        log_event(
-                            idx=df_5m.index.get_loc(t5),
-                            t=t5,
-                            trend=trend,
-                            event="tp_hit",
-                            validation_tf="5m",
-                            trade_details=trade_details,
-                            exit_price=trade_details["tp"],
-                        )
+                        
 
                         trade_active = False
                         trade_details = None
@@ -928,15 +860,7 @@ def market_structure_mapping(
                     print(f"{indent}❌ POI INVALIDATED @ {t5}")
                     print(f"{indent}   Level broken: {invalidation_level}")
                     # 🔥 POI INVALIDATED — LOG HERE
-                    log_event(
-                        idx=df_5m.index.get_loc(t5),
-                        t=t5,
-                        trend=trend,
-                        event="poi_invalidated",
-                        validation_tf="5m",
-                        active_poi=active_poi,
-                        poi_invalidation_level=invalidation_level,
-                    )
+                    
                     if pois:
                         pois.pop(0)
                         poi_active = False
@@ -976,17 +900,7 @@ def market_structure_mapping(
                     print(f"{indent}❌ POI INVALIDATED @ {t5}")
                     print(f"{indent}   Level broken: {invalidation_level}")
 
-                    # 🔥 POI INVALIDATED — LOG HERE
-                    log_event(
-                        idx=df_5m.index.get_loc(t5),
-                        t=t5,
-                        trend=trend,
-                        event="poi_invalidated",
-                        validation_tf="5m",
-                        active_poi=active_poi,
-                        poi_invalidation_level=invalidation_level,
-                    )
-
+                   
                     if pois:
                         pois.pop(0)
                         poi_active = False
@@ -1079,19 +993,7 @@ def market_structure_mapping(
                     protected_5m_point = None
                     continue
                 print(f"{indent}✅ 5M Protected Point: {protected_5m_point}")
-                # 🔥 5M STRUCTURE READY — LOG HERE
-                log_event(
-                    idx=df_5m.index.get_loc(t5),
-                    t=t5,
-                    trend=trend,
-                    event="m5_protected_level_set",
-                    validation_tf="5m",
-                    swing_high=protected_5m_point if opp_trend == "BEARISH" else None,
-                    swing_low=protected_5m_point if opp_trend == "BULLISH" else None,
-                    protected_level=protected_5m_point,
-                    protected_level_type = "HIGH" if opp_trend == "BEARISH" else "LOW",
-                    opp_trend=opp_trend,
-                )
+                
             else:
                 continue
 
@@ -1111,20 +1013,6 @@ def market_structure_mapping(
                         pois.pop(0)
                     protected_5m_point = None
 
-                    # 🔥 5M CHOCH — LOG HERE
-                    log_event(
-                        idx=df_5m.index.get_loc(t5),
-                        t=t5,
-                        trend=trend,
-                        event="m5_choch",
-                        validation_tf="5m",
-                        # 🔑 STRUCTURE DETAILS (for plotting)
-                        choch_broken_level=broken_level,   # exact level broken
-                        structure_type="SH" if opp_trend == "BULLISH" else "SL",
-                        choch_direction = "UP" if c5.close > broken_level else "DOWN",
-                        # 🔑 CONTEXT (optional but very useful)
-                        active_poi=active_poi
-                    )
 
                 elif c5.close < c5.open:
                     opp_pullback_count += 1
@@ -1138,20 +1026,7 @@ def market_structure_mapping(
                     protected_5m_point = new_level
                     opp_pullback_count = 0
 
-                    # 🔥 5M BOS — LOG HERE
-                    log_event(
-                        idx=df_5m.index.get_loc(t5),
-                        t=t5,
-                        trend=trend,
-                        event="m5_bos",
-                        validation_tf="5m",
-                        bos_from_level=old_level,
-                        bos_to_level=new_level,
-                        bos_direction="up" if trend == "BULLISH" else "down",
-                        structure_type="HH",
-                        active_poi=active_poi,
-                    )
-
+                  
             else:
                 # opp_trend is BULLISH, so protected_5m_point is a SWING LOW
                 # CHOCH = break ABOVE swing low
@@ -1164,23 +1039,7 @@ def market_structure_mapping(
                         pois.pop(0)
                     protected_5m_point = None
 
-                    # 🔥 5M CHOCH — LOG HERE
-                    log_event(
-                        idx=df_5m.index.get_loc(t5),
-                        t=t5,
-                        trend=trend,
-                        event="m5_choch",
-                        validation_tf="5m",
-
-                        # 🔑 STRUCTURE DETAILS (for plotting)
-                        choch_broken_level=broken_level,   # exact level broken
-                        structure_type = "SL" if trend == "BULLISH" else "SH",
-                        choch_direction="UP" if c5.close > broken_level else "DOWN",
-                        # 🔑 CONTEXT (optional but very useful)
-                        active_poi=active_poi
-                    )
-
-
+                    
                 elif c5.close > c5.open:
                     opp_pullback_count += 1
                 elif protected_5m_point is not None and c5.high > protected_5m_point and opp_pullback_count < 2:
@@ -1194,21 +1053,6 @@ def market_structure_mapping(
                     protected_5m_point = new_level
                     opp_pullback_count = 0
 
-                    # 🔥 5M BOS — LOG HERE
-                    log_event(
-                        idx=df_5m.index.get_loc(t5),
-                        t=t5,
-                        trend=trend,
-                        event="m5_bos",
-                        validation_tf="5m",
-                        bos_from_level=old_level,
-                        bos_to_level=new_level,
-                        bos_direction="down",
-                        structure_type="LL",             # Lower Low
-
-                        # 🔑 CONTEXT
-                        active_poi=active_poi
-                    )
         # --------------------------------------------------
         # 6️⃣ 5M CHOCH → TRADE (EXECUTE ONCE, THEN MANAGE)
         # --------------------------------------------------
@@ -1246,41 +1090,14 @@ def market_structure_mapping(
                 # -------------------------------
                 if trend == "BULLISH" and trade["tp"] >= swing_high:
                     print(f"{indent}❌ TP ABOVE SWING HIGH → TRADE REJECTED")
-                    # 🔥 TRADE REJECTED — LOG HERE
-                    log_event(
-                        idx=df_5m.index.get_loc(t5),
-                        t=t5,
-                        trend=trend,
-                        event="trade_rejected",
-                        validation_tf="5m",                        
-                        rejection_reason="tp_above_htf_swing_high",
-                        tp=trade["tp"],
-                        htf_swing=swing_high,
-                        active_poi=active_poi,
-                        rejection_at_time=t5,
-                        rejection_structure="htf_swing",
-                    )
+                   
 
                     choch_validated = False
                     continue
 
                 if trend == "BEARISH" and trade["tp"] <= swing_low:
                     print(f"{indent}❌ TP BELOW SWING LOW → TRADE REJECTED")
-                    # 🔥 TRADE REJECTED — LOG HERE
-                    log_event(
-                        idx=df_5m.index.get_loc(t5),
-                        t=t5,
-                        trend=trend,
-                        event="trade_rejected",
-                        validation_tf="5m",                        
-                        rejection_reason="tp_below_htf_swing_low",
-                        tp=trade["tp"],
-                        htf_swing=swing_low,
-                        active_poi=active_poi,
-                        rejection_at_time=t5,
-                        rejection_structure="htf_swing",
-                    )
-
+                    
 
                     choch_validated = False
                     continue
@@ -1302,22 +1119,7 @@ def market_structure_mapping(
                 # 🔥 TRADE ENTRY → 1:3 R:R LINES!
                 rr_ratio = abs((trade_details["tp"] - trade_details["entry"]) / (trade_details["entry"] - trade_details["sl"]))
                 # 🔥 TRADE ENTRY — LOG HERE
-                log_event(
-                    idx=df_5m.index.get_loc(t5),
-                    t=t5,
-                    trend=trend,
-                    event="trade_entry",
-                    validation_tf="5m",
-                    entry=trade_details["entry"],
-                    sl=trade_details["sl"],
-                    tp=trade_details["tp"],
-                    # 🔑 TRADE DETAILS
-                    trade_details=trade_details,
-                    rr_ratio=rr_ratio,
-
-                    # 🔑 CONTEXT
-                    active_poi=active_poi,
-                )
+                
 
             else:
                 print(f"{indent}❌ Trade logic rejected")

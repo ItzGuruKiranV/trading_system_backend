@@ -1,80 +1,93 @@
-# debug/plot_5m.py
+# debug/plot_5m.py - PLOTS YOUR ACTUAL DATA
+
 import finplot as fplt
 import pandas as pd
 
 def plot_5m_legs(all_legs_event_logs, df_5m, chunk_size=5):
-    """
-    Plots 5M legs with rectangles for each swing leg.
-    all_legs_event_logs: List of dicts with keys ['start', 'end', 'low', 'high', 'type']
-    df_5m: 5M dataframe with datetime index
-    chunk_size: how many legs per plot (to avoid overcrowding)
-    """
+    """Plots ALL swing_state events → POIs, swings, structure breaks."""
+    
     if not all_legs_event_logs:
-        print("[plot_5m_legs] ⚠️ No leg events to plot")
+        print("[plot_5m_legs] ⚠️ No events")
         return
-
-    # Ensure df_5m index is datetime and sorted
-    df_5m = df_5m.copy()
-    df_5m.sort_index(inplace=True)
+    
+    print(f"[plot_5m_legs] 📊 Events: {len(all_legs_event_logs)}")
+    print(f"[plot_5m_legs] Sample event: {all_legs_event_logs[0].event if hasattr(all_legs_event_logs[0], 'event') else 'NO EVENT'}")
+    
+    # Prep df_5m
+    df_5m = df_5m.copy().sort_index()
     if not isinstance(df_5m.index, pd.DatetimeIndex):
         df_5m.index = pd.to_datetime(df_5m.index)
-
-    # Split events into chunks
+    
+    # ✅ PLOT ALL EVENTS (no filtering)
     for i in range(0, len(all_legs_event_logs), chunk_size):
         chunk = all_legs_event_logs[i:i + chunk_size]
-        start_idx = chunk[0]['start']
-        end_idx = chunk[-1]['end']
-
-        # Try to map to actual timestamps in df_5m
-        try:
-            if isinstance(start_idx, int):
-                start_5m_time = df_5m.index[start_idx]  # fallback if index is integer
-            else:
-                start_5m_time = start_idx
-            if isinstance(end_idx, int):
-                end_5m_time = df_5m.index[end_idx]
-            else:
-                end_5m_time = end_idx
-        except Exception:
-            print(f"[plot_5m_legs] ⚠️ Could not map leg indices to timestamps, skipping chunk {i}-{i+chunk_size}")
-            continue
-
-        # Create a new plot for each chunk
-        ax, _ = fplt.create_plot(f"5M Swings {i+1}-{i+len(chunk)}", init_zoom_periods=100)
-        fplt.candlestick_ochl(df_5m[['open','close','high','low']], ax=ax)
-
-        # Draw rectangles
-        for leg in chunk:
+        
+        # Chunk time range from events
+        times = []
+        for event in chunk:
+            if hasattr(event, 'time'):
+                times.append(event.time)
+            elif hasattr(event, 'index') and isinstance(event.index, int):
+                times.append(df_5m.index[event.index])
+        
+        if times:
+            start_time = min(times)
+            end_time = max(times)
+        else:
+            start_time, end_time = df_5m.index[0], df_5m.index[-1]
+        
+        # Create plot
+        ax = fplt.create_plot(f"5M SMC Debug {i+1}-{i+len(chunk)} ({all_legs_event_logs[i].event})")
+        fplt.candlestick_ochl(df_5m[['open', 'close', 'high', 'low']], ax=ax)
+        
+        # Plot each event
+        for j, event in enumerate(chunk):
             try:
-                low = leg.get('low')
-                high = leg.get('high')
-                leg_type = leg.get('type', 'LEG')
-                start_time = leg.get('start')
-                end_time = leg.get('end')
-
-                # Map start/end to actual timestamps in df_5m
-                if isinstance(start_time, int):
-                    start_time = df_5m.index[start_time]
-                if isinstance(end_time, int):
-                    end_time = df_5m.index[end_time]
-
-                # Skip if low/high or timestamps missing
-                if low is None or high is None or start_time is None or end_time is None:
-                    print(f"[plot_5m_legs] ⚠️ Skipping leg due to missing data: {leg}")
-                    continue
-
-                # Choose color
-                color = 'green' if leg_type.upper() == 'BULL' else 'red'
-
-                fplt.add_rect(
-                    (start_time, low),
-                    (end_time, high),
-                    color=color,
-                    ax=ax,
-                    text=leg_type
-                )
+                # Convert namedtuple/dataclass → dict
+                event_dict = vars(event) if hasattr(event, '__dict__') else event.__dict__
+                
+                event_name = getattr(event, 'event', 'UNKNOWN')
+                
+                # 1️⃣ POI BOX (priority)
+                if hasattr(event, 'active_poi') and event.active_poi:
+                    poi = event.active_poi
+                    poi_time = poi.get('time') or poi.get('start_5m_time')
+                    rect_start = pd.to_datetime(poi_time)
+                    rect_end = event.time
+                    low = poi.get('price_low')
+                    high = poi.get('price_high')
+                    poi_type = poi.get('type', 'POI')
+                    
+                    if low and high and rect_start <= rect_end:
+                        color = 'cyan' if poi_type.upper() == 'OB' else 'yellow'
+                        fplt.add_rect((rect_start, low), (rect_end, high), 
+                                    color=color, width_fill=0.4, ax=ax, text=f"{poi_type}")
+                        print(f"✅ POI {poi_type}: {low:.5f}-{high:.5f}")
+                
+                # 2️⃣ SWING BOX
+                elif (hasattr(event, 'swing_high') and event.swing_high and 
+                      hasattr(event, 'swing_low') and event.swing_low):
+                    swing_start = event.time
+                    swing_end = swing_start + pd.Timedelta(hours=2)  # Extend for visibility
+                    fplt.add_rect((swing_start, event.swing_low), (swing_end, event.swing_high), 
+                                color='lime', width_fill=0.2, ax=ax, text="SWING")
+                
+                # 3️⃣ Event marker (vertical line)
+                else:
+                    marker_time = event.time if hasattr(event, 'time') else df_5m.index[event.index]
+                    fplt.plot(df_5m.index, df_5m['close'], ax=ax)  # Background
+                    fplt.add_line((marker_time, df_5m['low'].min()), 
+                                (marker_time, df_5m['high'].max()), 
+                                color='orange', width=2, ax=ax)
+                
+                print(f"✅ Event {i+j}: {event_name}")
+                
             except Exception as e:
-                print(f"[plot_5m_legs] ❌ Error plotting leg: {leg}")
-                print(e)
+                print(f"[plot_5m_legs] ❌ Event {i+j}: {e}")
+        
+        print(f"✅ Chunk {i+1}-{i+len(chunk)} plotted")
+    
+    fplt.show()
 
-        fplt.show()
+# Usage:
+# plot_5m_legs(EVENTLOG or MASTERLOG, df_5m, chunk_size=3)

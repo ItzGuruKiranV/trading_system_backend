@@ -151,8 +151,9 @@ def main():
 
         from debug.swings_plot_4h import plot_swings_and_events_4h
         from debug.plot_5m import plot_5m_legs
-        
-        plot_5m_legs(all_legs_event_logs, df_5m)
+        plot_swings_and_events_4h(
+            df_4h=refined_4h_df,
+            event_log=event_log)
         
         
     except Exception as e:
@@ -178,10 +179,9 @@ def main():
         )
     except Exception as e:
         print(f"\n❌ Error in structure mapping: {e}")
-'''plot_swings_and_events_4h(
-            df_4h=refined_4h_df,
-            event_log=event_log
-        )'''
+'''        plot_5m_legs(all_legs_event_logs, df_5m)
+
+        '''
 
 
 # ==================================================
