@@ -1,7 +1,6 @@
 """
 Single entry point for the trading agent system.
 """
-
 # ==================================================
 # STANDARD LIBRARY IMPORTS
 # ==================================================
@@ -29,13 +28,14 @@ from engine.resample import resample_to_4h , resample_to_5m
 from engine.trend_seed import detect_seed
 from engine_2.resample import resample_to_30m  
 from engine_2.structure_mapping_30m import market_structure_mapping_30m
-from engine.swings_detect import market_structure_mapping
+from engine.swings_detect import market_structure_mapping, MASTER_LOG,all_legs_event_logs
+
 
 # ==================================================
 # FIXED INPUT FILE
 # ==================================================
 MINUTE_CSV_PATH = Path(
-    r"D:\Trading Project\trading_system_backend\HISTDATA_COM_MT_EURUSD_M12023\DAT_MT_EURUSD_M1_2023.csv"
+    r"D:\Trading Project\trading_system_backend\HISTDATA_COM_MT_EURUSD_M12022\DAT_MT_EURUSD_M1_2022.csv"
 )
 
 # ==================================================
@@ -134,7 +134,7 @@ def main():
 
     # --------------------------------------------------
     # STEP 4: RULE-BASED SWING DETECTION (PHASE 1)
-    # --------------------------------------------------print("\n[Phase 1] Running rule-based structure mapping...")
+    # --------------------------------------------------
     print("\n[Phase 1] Running rule-based structure mapping... 1 ")
     try:
         # Sanity checks
@@ -144,24 +144,22 @@ def main():
         # Run logging phase
         event_log=market_structure_mapping(df_4h=refined_4h_df, df_5m=refined_5m_df, trend=trend, bos_time=bos_time)
         print("\n===== EVENT LOG DEBUG =====")
-        print("Total events:", len(event_log))  
+        print("Total events:", len(event_log)) 
+        # Save MASTER_LOG for detailed candle-level reasoning
+        pd.DataFrame(MASTER_LOG).to_csv("master_log.csv", index=False)
+        print(f"✅ master_log.csv saved with {len(MASTER_LOG)} entries") 
 
         from debug.swings_plot_4h import plot_swings_and_events_4h
-        from debug.swings_plot_5m import plot_swings_and_events_5m
-        plot_swings_and_events_4h(
-            df_4h=refined_4h_df,
-            event_log=event_log
-        )
-        plot_swings_and_events_5m(
-            df_5m=refined_5m_df,
-            event_log=event_log
-        )
-   
+        from debug.plot_5m import plot_5m_legs
+        
+        plot_5m_legs(all_legs_event_logs, df_5m)
+        
+        
     except Exception as e:
         print(f"\n❌ Error in swings mapping: {e}")
             
   
-"""
+
     print("\n[Phase 1] Running rule-based structure mapping... 2 ")
     try:
         # Sanity checks
@@ -180,8 +178,10 @@ def main():
         )
     except Exception as e:
         print(f"\n❌ Error in structure mapping: {e}")
-
-"""
+'''plot_swings_and_events_4h(
+            df_4h=refined_4h_df,
+            event_log=event_log
+        )'''
 
 
 # ==================================================

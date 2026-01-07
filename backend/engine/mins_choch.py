@@ -139,10 +139,23 @@ def process_structure_and_return_last_swing(
     print("\n====== FINAL STRUCTURE ======")
 
     if is_bullish:
-        print(f"Final Trend: BULLISH")
-        print(f"Protected Swing LOW: {swing_low}")
-        return swing_low
+        protected_low = (
+            last_confirmed_swing_low
+            if last_confirmed_swing_low is not None
+            else swing_low
+        )
+
+        print("Final Trend: BULLISH")
+        print(f"Protected Swing LOW: {protected_low}")
+        return protected_low
     else:
-        print(f"Final Trend: BEARISH")
-        print(f"Protected Swing HIGH: {swing_high}")
-        return swing_high
+        protected_high = (
+            last_confirmed_swing_high
+            if last_confirmed_swing_high is not None
+            else swing_high
+        )
+
+        print("Final Trend: BEARISH")
+        print(f"Protected Swing HIGH: {protected_high}")
+        return protected_high
+

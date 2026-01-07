@@ -1,14 +1,8 @@
 import pandas as pd
 import sys
 import os
-import matplotlib.pyplot as plt  # ← ADD THIS
-import matplotlib  # ← ADD THIS
 
-# Fix debug folder path
-debug_path = os.path.join(os.path.dirname(__file__), '..', 'debug')
-sys.path.insert(0, debug_path)
 
-from seed_plot import SeedPlotter  
 
 SEED_DAYS = 10
 CANDLES_PER_DAY_4H = 6
@@ -43,17 +37,12 @@ def detect_seed(df_4h: pd.DataFrame):
         break_idx  : int (break candle index)
         states     : List[CandleState]  # NEW: for animation
     """
-    """
-    DYNAMIC REAL-TIME SEED DETECTION WITH INSTANT PLOTTING!
-    Plots EXACTLY when BOS/CHOCH/PULLBACK events happen.
-    """
+    
     df = df_4h.copy().sort_index()
 
     if len(df) < SEED_CANDLES + 5:
         raise ValueError("Not enough data for seed detection")
 
-    plotter = SeedPlotter(df, [])
-    plotter.states = []  # Track states for plotting past events
     states = []
     
 
@@ -82,9 +71,8 @@ def detect_seed(df_4h: pd.DataFrame):
 
     print(f"TEMP TREND : {temp_trend}")
 
-    # DYNAMIC: Plot seed candles ONE BY ONE
     for i in range(SEED_CANDLES):
-        seed_complete = (i == SEED_CANDLES - 1)  # ← LAST seed candle
+        seed_complete = (i == SEED_CANDLES - 1)
         state=CandleState(
             index=i, time=df.index[i], temp_trend=temp_trend,
             pullback_active=False, protected_level=None,
@@ -92,8 +80,6 @@ def detect_seed(df_4h: pd.DataFrame):
             seed_complete=seed_complete
         )
         states.append(state)
-        plotter.states.append(state)
-        plotter.plot_single_state(state)    
 
 
     # --------------------------------------------------
@@ -124,7 +110,6 @@ def detect_seed(df_4h: pd.DataFrame):
             event=None, pullback_start_idx=pullback_start_idx, seed_complete=True
         )
         states.append(state)
-        plotter.states.append(state)
 
         
 
@@ -143,33 +128,29 @@ def detect_seed(df_4h: pd.DataFrame):
                     pullback_start_idx = i
                     pullback_active = True
                     state.event = "PULLBACK_START"
-                    plotter.plot_single_state(state)
                     continue
                 
                 # protected high must NOT break
                 if pullback_active:
                     if candle["high"] > protected_level:
-                        # 🔥 PULLBACK RESET → PLOT!
+                        # 🔥 PULLBACK RESET
                         state.event = "PULLBACK_RESET"
                         pullback_active = False
                         protected_level = None
                         pullback_lows.clear()
                         pullback_highs.clear()
-                        plotter.plot_single_state(state)
                         continue
                     else:
                         pullback_lows.append(candle["low"])
                         pullback_highs.append(candle["high"])
 
             if pullback_active and len(pullback_lows) >= 1:
-                # 🔥 PULLBACK CONFIRMED → PLOT!
                 final_pullback_low = min(pullback_lows)
                 final_pullback_high = max(pullback_highs)
                 state.pullback_low = final_pullback_low
                 state.pullback_high = final_pullback_high
                 state.event = "PULLBACK_CONFIRMED"
                 pullback_confirm_idx = i
-                plotter.plot_single_state(state)
                 break
 
         # -----------------------------
@@ -182,37 +163,31 @@ def detect_seed(df_4h: pd.DataFrame):
             )
 
             if is_pullback and not pullback_active:
-                # 🔥 PULLBACK START → PLOT!
                 protected_level = prev_candle["low"]
                 pullback_start_idx = i
                 pullback_active = True
                 state.event = "PULLBACK_START"
-                plotter.plot_single_state(state)
                 continue
 
             if pullback_active:
                 if candle["low"] < protected_level:
-                    # 🔥 PULLBACK RESET → PLOT!
                     state.event = "PULLBACK_RESET"
                     pullback_active = False
                     protected_level = None
                     pullback_lows.clear()
                     pullback_highs.clear()
-                    plotter.plot_single_state(state)
                     continue
                 else:
                     pullback_lows.append(candle["low"])
                     pullback_highs.append(candle["high"])
 
             if pullback_active and len(pullback_highs) >= 1:
-                # 🔥 PULLBACK CONFIRMED → PLOT!
                 final_pullback_low = min(pullback_lows)
                 final_pullback_high = max(pullback_highs)
                 state.pullback_low = final_pullback_low
                 state.pullback_high = final_pullback_high
                 state.event = "PULLBACK_CONFIRMED"
                 pullback_confirm_idx = i
-                plotter.plot_single_state(state)
                 break
 
 
@@ -236,59 +211,127 @@ def detect_seed(df_4h: pd.DataFrame):
             event=None, pullback_start_idx=pullback_start_idx, seed_complete=True
         )
         states.append(state)
-        plotter.states.append(state)
 
         if temp_trend == "BULLISH":
             if candle["high"] > seed_high:
                 print(f"BOS ↑ at {t}")
                 state.event = "BOS"
-                plotter.plot_single_state(state)
-                refined_df = df[df.index >= df.index[pullback_confirm_idx]]
-                
+                # slice from seed extreme
+                # ✅ REPLACE PULLBACK CUT LOGIC
+                if temp_trend == "BULLISH":
+                    # ✅ Find HL between seed high and BOS
+                    slice_df = df.loc[high_time : t]
+
+                    if not slice_df.empty:
+                        cut_time = slice_df["low"].idxmin()
+                    else:
+                        cut_time = high_time  # fallback safety
+                cut_idx = df.index.get_indexer([cut_time], method="ffill")[0]
+                refined_df = df.iloc[cut_idx:]
+
+                # 🔍 DEBUG: print seed extreme and refined DF first candle
+                print("📌 STRUCTURE START (BULLISH BOS)")
+                print(f"Swing LOW (HL) taken at: {cut_time}")
+                print(f"HL Price: {df.loc[cut_time]['low']}")
+
                 # 🔥 KEEP OPEN AFTER BOS!
                 print("🎉 BOS CONFIRMED! Plot stays open FOREVER!")
                 print("📊 Close window → continues to Market Structure phase")
-                plt.ioff()
-                plt.show(block=True)
                 return refined_df, "BULLISH", t, j, states
             
             if candle["low"] < seed_low:
                 print(f"CHOCH ↓ at {t}")
                 state.event = "CHOCH"
-                plotter.plot_single_state(state)
-                refined_df = df[df.index >= df.index[pullback_confirm_idx]]
-                
+                # slice from seed extreme
+                # ✅ REPLACE PULLBACK CUT LOGIC
+                # ✅ FIND SWING HIGH BETWEEN SEED HIGH AND CHOCH
+                choch_time = t
+
+                range_df = df.loc[high_time:choch_time]
+
+                swing_high_price = range_df["high"].max()
+                swing_high_time = range_df["high"].idxmax()
+
+                cut_time = swing_high_time
+                cut_price = swing_high_price
+               
+                cut_idx = df.index.get_indexer([cut_time], method="ffill")[0]
+                refined_df = df.iloc[cut_idx:]
+
+                # 🔍 DEBUG: print swing extreme and refined DF first candle
+                print(f"Swing HIGH taken at: {cut_time}, price: {cut_price}")
+                print(
+                    f"Refined DF starts at: {refined_df.index[0]} | "
+                    f"O:{refined_df.iloc[0]['open']} "
+                    f"H:{refined_df.iloc[0]['high']} "
+                    f"L:{refined_df.iloc[0]['low']} "
+                    f"C:{refined_df.iloc[0]['close']}"
+                )
+
                 print("🎉 CHOCH CONFIRMED! Plot stays open FOREVER!")
                 print("📊 Close window → continues...")
-                plt.ioff()
-                plt.show(block=True)
                 return refined_df, "BEARISH", t, j, states
         
         else:  # BEARISH
             if candle["low"] < seed_low:
                 print(f"BOS ↓ at {t}")
                 state.event = "BOS"
-                plotter.plot_single_state(state)
-                refined_df = df[df.index >= df.index[pullback_confirm_idx]]
-                
+                # slice from seed extreme
+                # ✅ REPLACE PULLBACK CUT LOGIC
+                # ✅ FIND SWING HIGH BETWEEN SEED LOW AND BOS
+                bos_time = t
+
+                range_df = df.loc[low_time:bos_time]
+
+                swing_high_price = range_df["high"].max()
+                swing_high_time = range_df["high"].idxmax()
+
+                cut_time = swing_high_time
+                cut_price = swing_high_price
+                cut_idx = df.index.get_indexer([cut_time], method="ffill")[0]
+                refined_df = df.iloc[cut_idx:]
+
+
+                print(
+                    f"Refined DF starts at: {refined_df.index[0]} | "
+                    f"O:{refined_df.iloc[0]['open']} "
+                    f"H:{refined_df.iloc[0]['high']} "
+                    f"L:{refined_df.iloc[0]['low']} "
+                    f"C:{refined_df.iloc[0]['close']}"
+                )
+
                 print("🎉 BOS CONFIRMED! Plot stays open FOREVER!")
-                plt.ioff()
-                plt.show(block=True)
                 return refined_df, "BEARISH", t, j, states
             
             if candle["high"] > seed_high:
                 print(f"CHOCH ↑ at {t}")
                 state.event = "CHOCH"
-                plotter.plot_single_state(state)
-                refined_df = df[df.index >= df.index[pullback_confirm_idx]]
-                
+                # slice from seed extreme
+                # ✅ REPLACE PULLBACK CUT LOGIC
+                # ✅ FIND SWING LOW BETWEEN SEED LOW AND CHOCH
+                choch_time = t
+
+                range_df = df.loc[low_time:choch_time]
+
+                swing_low_price = range_df["low"].min()
+                swing_low_time = range_df["low"].idxmin()
+
+                cut_time = swing_low_time
+                cut_price = swing_low_price
+                cut_idx = df.index.get_indexer([cut_time], method="ffill")[0]
+                refined_df = df.iloc[cut_idx:]
+
+                print(
+                    f"Refined DF starts at: {refined_df.index[0]} | "
+                    f"O:{refined_df.iloc[0]['open']} "
+                    f"H:{refined_df.iloc[0]['high']} "
+                    f"L:{refined_df.iloc[0]['low']} "
+                    f"C:{refined_df.iloc[0]['close']}"
+                )
+
                 print("🎉 CHOCH CONFIRMED! Plot stays open FOREVER!")
-                plt.ioff()
-                plt.show(block=True)
                 return refined_df, "BULLISH", t, j, states
 
     # Only reaches here if NO break
-    print("🎬 NO BREAK - Plot stays open...")
-    plt.ioff()
-    plt.show(block=True)
+    print("🎬 NO BREAK - no break detected")
     raise ValueError("No break detected")

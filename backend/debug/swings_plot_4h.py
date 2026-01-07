@@ -1,208 +1,116 @@
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 import pandas as pd
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
-from swings_plot import swing_state
-# =========================
-# Plot Function
-# =========================
-def plot_swings_and_events_4h(
-    df_4h: pd.DataFrame,
-    event_log
-):
+
+def plot_swings_and_events_4h(df_4h, event_log, line_len_candles: int = 6):
     if df_4h.empty:
         raise ValueError("df_4h is empty")
 
     df = df_4h.copy()
-
-    # Ensure datetime index
-    if "time" in df.columns:
-        df["time"] = pd.to_datetime(df["time"])
-        df.set_index("time", inplace=True)
-
     df.index = pd.to_datetime(df.index)
+    df.reset_index(inplace=True)  # Plotly needs a column for x
 
-    fig, ax = plt.subplots(figsize=(18, 8))
+    fig = go.Figure()
 
-    # =========================
-    # Plot 4H Candles
-    # =========================
-    for idx, row in df.iterrows():
-        o, h, l, c = row["open"], row["high"], row["low"], row["close"]
-        color = "green" if c >= o else "red"
+    # -------------------------
+    # 1️⃣ Candles
+    # -------------------------
+    fig.add_trace(go.Candlestick(
+        x=df['time'],
+        open=df['open'],
+        high=df['high'],
+        low=df['low'],
+        close=df['close'],
+        name="4H Candles",
+        increasing_line_color='green',
+        decreasing_line_color='red',
+        hovertemplate='Time: %{x}<br>O: %{open}<br>H: %{high}<br>L: %{low}<br>C: %{close}<extra></extra>'
+    ))
 
-        ax.plot([idx, idx], [l, h], color=color, linewidth=1)
-        ax.plot([idx, idx], [o, c], color=color, linewidth=4)
-
-    # =========================
-    # Legend registry
-    # =========================
-    legend_handles = {}
-
-    def legend_once(label, artist):
-        if label not in legend_handles:
-            legend_handles[label] = artist
-
-    # =========================
-    # Distance rule
-    # =========================
-    MAX_DISTANCE = pd.Timedelta(hours=2)
-
-    # =========================
-    # Plot EVENTS (4H only)
-    # =========================
+    # -------------------------
+    # 2️⃣ Events
+    # -------------------------
     for e in event_log:
         if e.validation_tf != "4h":
             continue
 
         t_event = pd.to_datetime(e.time)
+        if t_event not in df['time'].values:
+            continue
 
-        if e.event == "start":
-            # ---------- EXACT MATCH ----------
-            if t_event in df.index:
-                price = df.loc[t_event]["close"]
-                sc = ax.scatter(
-                    t_event, price,
-                    s=40,
-                    color="#B8860B",  # dark yellow
-                    zorder=6
-                )
-                legend_once("Structure Start BOS (Exact)", sc)
+        start_idx = df.index[df['time'] == t_event][0]
+        end_idx = min(start_idx + line_len_candles, len(df) - 1)
 
-            # ---------- NEARBY MATCH ----------
-            else:
-                nearest_idx = df.index.get_indexer(
-                    [t_event], method="nearest"
-                )[0]
-                nearest_time = df.index[nearest_idx]
-                delta = abs(nearest_time - t_event)
+        xmin = df.loc[start_idx, 'time']
+        xmax = df.loc[end_idx, 'time']
 
-                if delta <= MAX_DISTANCE:
-                    price = df.loc[nearest_time]["close"]
-                    sc = ax.scatter(
-                        nearest_time, price,
-                        s=40,
-                        color="yellow",
-                        zorder=5
-                    )
-                    legend_once("Structure Start BOS (Nearby ≤2h)", sc)
-                # else: intentionally NOT plotted
-        elif e.event == "pullback_confirmed":
+        # Pullback Confirmed
+        if e.event == "pullback_confirmed":
+            price = df.loc[start_idx, 'close']
+            fig.add_trace(go.Scatter(
+                x=[t_event], y=[price],
+                mode='markers',
+                marker=dict(color='blue', size=10, symbol='circle'),
+                name='Pullback Confirmed',
+                hovertemplate=f'Time: {t_event}<br>Price: {price}<extra></extra>'
+            ))
 
-            if e.swing_low is not None:
-                price = e.swing_low
-            elif e.swing_high is not None:
-                price = e.swing_high
-            else:
-                continue  # safety
+        # BOS / CHOCH horizontal lines
+        elif e.event in ["bos_4h", "choch_4h"]:
+            level = e.swing_high if e.swing_high is not None else e.swing_low
+            if level is None:
+                continue
+            color = "black" if e.event=="bos_4h" else "yellow"
+            name = "BOS (4H)" if e.event=="bos_4h" else "CHOCH (4H)"
+            fig.add_trace(go.Scatter(
+                x=[xmin, xmax],
+                y=[level, level],
+                mode='lines',
+                line=dict(color=color, width=3),
+                name=name,
+                hovertemplate=f'Time Range: {xmin} - {xmax}<br>Level: {level}<extra></extra>'
+            ))
 
-            sc = ax.scatter(
-                t_event, price,
-                marker="*",
-                s=120,
-                color="blue",
-                zorder=7
-            )
-            legend_once("Pullback Confirmed", sc)
-        elif e.event == "bos_without_poi":
-            # -----------------------------
-            # BOS price (from swing)
-            # -----------------------------
-            price = e.swing_high if e.swing_high is not None else e.swing_low
-            if price is None:
-                continue  # safety
-
-            sc = ax.scatter(
-                t_event,
-                price,
-                s=50,
-                color="black",
-                zorder=8
-            )
-            legend_once("BOS Continuation", sc)
-
+        # POI rectangles or lines
         elif e.event == "poi_detected" and e.active_poi:
             poi = e.active_poi
-            poi_type = poi.get("type")  # "LIQ" or "OB"
-
+            poi_type = poi.get("type")
             low = poi.get("price_low")
             high = poi.get("price_high")
-
-            # -----------------------------
-            # Safety: nothing to plot
-            # -----------------------------
             if low is None and high is None:
                 continue
 
-            # -----------------------------
-            # Time width (local visibility)
-            # -----------------------------
-            width = pd.Timedelta(hours=12)  # 3 x 4H candles
+            color = "#C2185B" if poi_type=="LIQ" else "purple"
+            name = "Liquidity POI" if poi_type=="LIQ" else "Order Block"
 
-            # -----------------------------
-            # STYLE BY TYPE
-            # -----------------------------
-            if poi_type == "LIQ":
-                color = "#C2185B"   # pink
-                label_range = "Liquidity POI (Range)"
-                label_line = "Liquidity POI (Single Price)"
-
-            elif poi_type == "OB":
-                color = "purple"
-                label_range = "Order Block (Range)"
-                label_line = "Order Block (Single Price)"
-
-            else:
-                continue  # unknown POI type
-
-            # -----------------------------
-            # CASE 1: FULL RANGE → RECTANGLE
-            # -----------------------------
             if low is not None and high is not None:
-                rect = plt.Rectangle(
-                    (t_event, low),
-                    width,
-                    high - low,
-                    color=color,
-                    alpha=0.3,
-                    zorder=4
-                )
-                ax.add_patch(rect)
-                legend_once(label_range, rect)
-
-            # -----------------------------
-            # CASE 2: PARTIAL → HORIZONTAL LINE
-            # -----------------------------
+                # rectangle as filled area
+                fig.add_trace(go.Scatter(
+                    x=[xmin, xmax, xmax, xmin, xmin],
+                    y=[low, low, high, high, low],
+                    fill='toself',
+                    fillcolor=color,
+                    line=dict(color=color),
+                    opacity=0.25,
+                    name=name,
+                    hovertemplate=f'Time Range: {xmin} - {xmax}<br>Price Range: {low}-{high}<extra></extra>'
+                ))
             else:
                 price = low if low is not None else high
-                ln = ax.hlines(
-                    y=price,
-                    xmin=t_event,
-                    xmax=t_event + width,
-                    colors=color,
-                    linewidth=2,
-                    zorder=5
-                )
-                legend_once(label_line, ln)
+                fig.add_trace(go.Scatter(
+                    x=[xmin, xmax],
+                    y=[price, price],
+                    mode='lines',
+                    line=dict(color=color, width=3),
+                    name=name,
+                    hovertemplate=f'Time Range: {xmin} - {xmax}<br>Price: {price}<extra></extra>'
+                ))
 
+    fig.update_layout(
+        title="4H Market Structure (Pullback → BOS → CHOCH → POI)",
+        xaxis_title="Time",
+        yaxis_title="Price",
+        xaxis_rangeslider_visible=False,
+        hovermode="x unified"
+    )
 
-
-    # =========================
-    # Styling
-    # =========================
-    ax.set_title("4H Market Structure (Debug View)", fontsize=14)
-    ax.set_xlabel("Time")
-    ax.set_ylabel("Price")
-    ax.grid(alpha=0.2)
-
-    if legend_handles:
-        ax.legend(
-            legend_handles.values(),
-            legend_handles.keys(),
-            loc="upper left",
-            fontsize=9
-        )
-    
-    fig.autofmt_xdate()
-    plt.tight_layout()
-    plt.show()
+    fig.write_html("debug_plot.html", auto_open=True)
