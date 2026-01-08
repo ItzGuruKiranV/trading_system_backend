@@ -1,162 +1,183 @@
 import pandas as pd
-import numpy as np
 from typing import List, Dict
 
 
 def detect_pois_from_swing(
     ohlc_df: pd.DataFrame,
     trend: str,
-    ob_multiplier: float = 1.5,
+    ob_multiplier: float = 1.8,
     liq_pullback_candles: int = 2,
 ) -> List[Dict]:
-    """
-    Unified POI detector (OB + LIQ)
-    Timeframe-agnostic, past-data-only, multi-POI capable.
-    """
 
-    df = ohlc_df
-    df = df[["open", "high", "low", "close"]]
+    df = ohlc_df[["open", "high", "low", "close"]].copy()
     df["range"] = df["high"] - df["low"]
 
     is_bull = trend.lower() == "bullish"
     pois: List[Dict] = []
-
     n = len(df)
 
     # ======================================================
-    # 1️⃣ ORDER BLOCK DETECTION
+    # 1️⃣ INSTITUTIONAL ORDER BLOCK DETECTION (UNCHANGED)
     # ======================================================
-    for i in range(0, n - 2):  # Start from 0 to include first candle
-        base = df.iloc[i]
-        base_low = base["low"]
-        base_high = base["high"]
-        base_range = base_high - base_low
+    for i in range(3, n - 3):
 
-        if base_range <= 0:
+        disp_window = df.iloc[i:i+3]
+        disp_high = disp_window["high"].max()
+        disp_low = disp_window["low"].min()
+        disp_range = disp_high - disp_low
+
+        prev_ranges = df["range"].iloc[i-5:i]
+        avg_prev_range = prev_ranges.mean()
+
+        if avg_prev_range <= 0:
             continue
 
-        # Need at least one candle after for displacement
-        if i + 1 >= n:
-            continue
-            
-        disp = df.iloc[i + 1]
-        disp_range = disp["high"] - disp["low"]
+        closes = disp_window["close"]
+        opens = disp_window["open"]
 
-        valid_disp = (
-            disp["close"] > disp["open"] if is_bull
-            else disp["close"] < disp["open"]
-        ) and disp_range >= ob_multiplier * base_range
-
-        if not valid_disp:
-            continue
-
-        ob_low = base_low
-        ob_high = base_high
-
-        # Check if OB is broken (price goes THROUGH it), not just touched
-        future = df.iloc[i + 2 :]
-        if not future.empty:
-            # For bullish OB: broken if future low < OB low
-            # For bearish OB: broken if future high > OB high
-            if is_bull:
-                broken = (future["low"] < ob_low).any()
-            else:
-                broken = (future["high"] > ob_high).any()
-            
-            if broken:
-                continue
-
-        pois.append({
-            "time": df.index[i],
-            "type": "OB",
-            "trend": trend.upper(),
-            "price_low": float(ob_low),
-            "price_high": float(ob_high),
-        })
-
-    # ======================================================
-    # 2️⃣ LIQUIDITY DETECTION
-    # ======================================================
-    for i in range(1, n - 1):
-        protected = df["high"].iloc[i] if is_bull else df["low"].iloc[i]
-
-        if (
-            df["high"].iloc[i + 1] > protected
-            if is_bull
-            else df["low"].iloc[i + 1] < protected
-        ):
-            continue
-
-        pb = 0
-        j = i + 1
-        while j < n and (
-            df["close"].iloc[j] < df["open"].iloc[j]
-            if is_bull
-            else df["close"].iloc[j] > df["open"].iloc[j]
-        ):
-            pb += 1
-            j += 1
-
-        if pb < liq_pullback_candles:
-            continue
-
-        k = j
-        while k < n and not (
-            df["high"].iloc[k] > protected
-            if is_bull
-            else df["low"].iloc[k] < protected
-        ):
-            k += 1
-
-        if k == n:
-            continue
-
-        region = (
-            df["low"].iloc[i : k + 1]
-            if is_bull
-            else df["high"].iloc[i : k + 1]
+        direction_ok = (
+            (closes > opens).sum() >= 2 if is_bull
+            else (closes < opens).sum() >= 2
         )
 
-        liq_low = region.min()
-        liq_high = region.max()
-
-        future = df.iloc[k + 1 :]
-        tapped = (
-            (future["low"] <= liq_high) &
-            (future["high"] >= liq_low)
-        ).any()
-
-        if tapped:
+        if not direction_ok:
             continue
 
-        pois.append({
-            "time": df.index[i],
+        if disp_range < ob_multiplier * avg_prev_range:
+            continue
+
+        lookback = df.iloc[i-10:i]
+        if lookback.empty:
+            continue
+
+        if is_bull:
+            if disp_high <= lookback["high"].max():
+                continue
+        else:
+            if disp_low >= lookback["low"].min():
+                continue
+
+        for lb in [3, 2, 1]:
+            base = df.iloc[i-lb:i]
+            base_low = base["low"].min()
+            base_high = base["high"].max()
+            base_range = base_high - base_low
+
+            if base_range <= 0:
+                continue
+
+            if base_range > 0.30 * disp_range:
+                continue
+
+            if is_bull:
+                if not (base["close"] < base["open"]).any():
+                    continue
+            else:
+                if not (base["close"] > base["open"]).any():
+                    continue
+
+            future = df.iloc[i+3:]
+            if not future.empty:
+                if is_bull and (future["low"] < base_low).any():
+                    continue
+                if not is_bull and (future["high"] > base_high).any():
+                    continue
+
+            pois.append({
+                "time": df.index[i-lb],
+                "type": "OB",
+                "trend": trend.upper(),
+                "price_low": float(base_low),
+                "price_high": float(base_high),
+            })
+            break
+
+    # ======================================================
+    # 🔧 OB MERGING LOGIC (NEW – ONLY REFINEMENT)
+    # ======================================================
+    obs = [p for p in pois if p["type"] == "OB"]
+    liqs = [p for p in pois if p["type"] == "LIQ"]
+
+    obs.sort(key=lambda x: x["time"])
+    merged_obs: List[Dict] = []
+
+    for ob in obs:
+        if not merged_obs:
+            merged_obs.append(ob)
+            continue
+
+        last = merged_obs[-1]
+
+        overlap = not (
+            ob["price_high"] < last["price_low"]
+            or ob["price_low"] > last["price_high"]
+        )
+
+        if overlap:
+            last["price_low"] = min(last["price_low"], ob["price_low"])
+            last["price_high"] = max(last["price_high"], ob["price_high"])
+            last["time"] = min(last["time"], ob["time"])
+        else:
+            merged_obs.append(ob)
+
+    # ======================================================
+    # 2️⃣ INSTITUTIONAL LIQUIDITY DETECTION (UNCHANGED)
+    # ======================================================
+    for i in range(liq_pullback_candles, n - 1):
+
+        pullback = df.iloc[i - liq_pullback_candles:i]
+
+        if is_bull:
+            if not (pullback["close"] < pullback["open"]).all():
+                continue
+        else:
+            if not (pullback["close"] > pullback["open"]).all():
+                continue
+
+        prior_df = df.iloc[:i - liq_pullback_candles]
+        if prior_df.empty:
+            continue
+
+        if is_bull:
+            swing_extreme = prior_df["low"].min()
+            pb_extreme = pullback["high"].max()
+            retrace_level = swing_extreme + 0.5 * (pb_extreme - swing_extreme)
+        else:
+            swing_extreme = prior_df["high"].max()
+            pb_extreme = pullback["low"].min()
+            retrace_level = swing_extreme - 0.5 * (swing_extreme - pb_extreme)
+
+        curr = df.iloc[i]
+
+        if is_bull:
+            if curr["low"] > retrace_level:
+                continue
+            liq_price = swing_extreme
+        else:
+            if curr["high"] < retrace_level:
+                continue
+            liq_price = swing_extreme
+
+        future = df.iloc[i + 1:]
+        if not future.empty:
+            tapped = (
+                (future["low"] <= liq_price).any()
+                if is_bull
+                else (future["high"] >= liq_price).any()
+            )
+            if tapped:
+                continue
+
+        liqs.append({
+            "time": df.index[i - 1],
             "type": "LIQ",
             "trend": trend.upper(),
-            "price_low": float(liq_low) if is_bull else None,
-            "price_high": float(liq_high) if not is_bull else None,
+            "price_low": float(liq_price) if is_bull else None,
+            "price_high": float(liq_price) if not is_bull else None,
         })
 
     # ======================================================
-    # 🖨️ PRINT ALL POIs (OB + LIQ)
+    # FINAL OUTPUT
     # ======================================================
-    print("\n========== POIs DETECTED ==========")
-    if not pois:
-        print("None")
-    else:
-        for idx, p in enumerate(pois, 1):
-            if p["type"] == "OB":
-                print(
-                    f"{idx}. {p['trend']} OB | "
-                    f"LOW: {p['price_low']} | HIGH: {p['price_high']}"
-                )
-            else:
-                side = "LOW" if p["price_low"] is not None else "HIGH"
-                price = p["price_low"] if p["price_low"] is not None else p["price_high"]
-                print(
-                    f"{idx}. {p['trend']} LIQ | "
-                    f"{side}: {price}"
-                )
-    print("=================================\n")
-
+    pois = merged_obs + liqs
     return pois

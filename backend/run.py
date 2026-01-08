@@ -78,6 +78,18 @@ def main():
         df_1m = pd.DataFrame(rows)
         df_1m.set_index("time", inplace=True)
         df_1m.sort_index(inplace=True)
+        # --------------------------------------------------
+        # FILTER: LAST 3 MONTHS ONLY
+        # --------------------------------------------------
+        print("\n[Filter] Using last 3 months only")
+
+        end_time = df_1m.index.max()
+        start_time = end_time - pd.DateOffset(months=3)
+
+        df_1m = df_1m.loc[df_1m.index >= start_time]
+
+        print(f"1M range : {df_1m.index.min()} → {df_1m.index.max()}")
+        print(f"Remaining candles: {len(df_1m)}")
 
         print(f"✅ Loaded {len(df_1m)} minute candles")
 
@@ -150,38 +162,43 @@ def main():
         print(f"✅ master_log.csv saved with {len(MASTER_LOG)} entries") 
 
         from debug.swings_plot_4h import plot_swings_and_events_4h
-        from debug.plot_5m import plot_5m_legs
+        from debug.plot_5m import plot_5m_pois
         plot_swings_and_events_4h(
             df_4h=refined_4h_df,
             event_log=event_log)
-        
+           
+        plot_5m_pois(all_legs_event_logs, df_5m=refined_5m_df)
+
         
     except Exception as e:
         print(f"\n❌ Error in swings mapping: {e}")
             
   
 
-    print("\n[Phase 1] Running rule-based structure mapping... 2 ")
-    try:
-        # Sanity checks
-        if refined_4h_df.empty or refined_5m_df.empty or refined_30m_df.empty:
-            raise ValueError("Refined dataframes are empty")
+#     print("\n[Phase 1] Running rule-based structure mapping... 2 ")
+#     try:
+#         # Sanity checks
+#         if refined_4h_df.empty or refined_5m_df.empty or refined_30m_df.empty:
+#             raise ValueError("Refined dataframes are empty")
 
-        # -------------------------
-        # CALL STRUCTURE LOGIC WITH 30M ADDED
-        # --------------------------------------------------
-        market_structure_mapping_30m(
-            df_4h=refined_4h_df,
-            df_5m=refined_5m_df,
-            df_30m=refined_30m_df,
-            trend=trend,
-            bos_time=bos_time,
-        )
-    except Exception as e:
-        print(f"\n❌ Error in structure mapping: {e}")
-'''        plot_5m_legs(all_legs_event_logs, df_5m)
-
-        '''
+#         # -------------------------
+#         # CALL STRUCTURE LOGIC WITH 30M ADDED
+#         # --------------------------------------------------
+#         market_structure_mapping_30m(
+#             df_4h=refined_4h_df,
+#             df_5m=refined_5m_df,
+#             df_30m=refined_30m_df,
+#             trend=trend,
+#             bos_time=bos_time,
+#         )
+#     except Exception as e:
+#         print(f"\n❌ Error in structure mapping: {e}")
+# '''    
+#         plot_swings_and_events_4h(
+#             df_4h=refined_4h_df,
+#             event_log=event_log)
+            
+#         '''
 
 
 # ==================================================

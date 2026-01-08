@@ -11,7 +11,9 @@ from debug.swings_plot import swing_state
 from engine.poi_detection import detect_pois_from_swing
 from engine.mins_choch import process_structure_and_return_last_swing
 from engine.plan_trade_5mins import plan_trade_from_choch_leg
-all_legs_event_logs = []
+all_legs_event_logs: List[List[Dict]] = []
+leg_5m_events: List[Dict] = []
+
 
 MASTER_LOG = []
 
@@ -140,7 +142,12 @@ def market_structure_mapping(
     max_depth: int = 50,
 ) -> List[swing_state]:
 
-    
+    tapped_pois = []
+    protected_5m_points = []
+    leg_5m_structure = []
+    all_5m_obs: list = []          # stores all OBs detected
+    all_5m_trades: list = []
+
     if depth == 0:
         EVENT_LOG.clear()
         MASTER_LOG.clear()
@@ -392,15 +399,26 @@ def market_structure_mapping(
     # PHASE 3 — POI DETECTION (FULL LEG)
     # ==================================================
     swing_df = df_4h.loc[df_4h.index[0]:pullback_time]
+    leg_start_4h = df_4h.index[0]  # start of swing_df
+    leg_end_4h = pullback_time      # end of swing_df
 
+    # Align 4H swing to nearest 5M candles
+    idx_start = df_5m.index.get_indexer([leg_start_4h], method="ffill")[0]
+    leg_start_5m = df_5m.index[idx_start]
+    idx_end = df_5m.index.get_indexer([leg_end_4h], method="ffill")[0]
+    leg_end_5m = df_5m.index[idx_end]
+
+    # Detect POIs
     pois = detect_pois_from_swing(
         ohlc_df=swing_df,
         trend=trend,
     )
+    for p in pois:
+        p["state"] = "ACTIVE"
 
     print(f"{indent}🎯 POIs detected: {len(pois)}")
 
-    # 🔥 Deduplicate POIs
+    # Deduplicate POIs
     seen = set()
     unique_pois = []
     for poi in pois:
@@ -409,21 +427,63 @@ def market_structure_mapping(
             seen.add(key)
             unique_pois.append(poi)
 
-    # 🔥 Log unique POIs
-    for poi in unique_pois:
-        poi_idx = df_4h.index.get_loc(poi["time"])
-        poi_type = poi["type"]
-        trend_upper = poi["trend"]
-        low = poi["price_low"]
-        high = poi["price_high"]
+    mapped_pois = []
 
-        # ✅ Decide reason based on POI type
+    # -----------------------------
+    # Map POIs to 5M and log events
+    # -----------------------------
+    for poi_idx, poi in enumerate(unique_pois, 1):
+        # Align POI time to nearest 5M candle
+        nearest_idx = df_5m.index.get_indexer([poi["time"]], method="ffill")[0]
+        start_time = df_5m.index[nearest_idx]
+
+        # End time for POI rectangle (4H window)
+        end_time = start_time + pd.Timedelta(hours=4)
+        if end_time > df_5m.index[-1]:
+            end_time = df_5m.index[-1]
+
+        # Select 5M candles for this POI
+        mask = (df_5m.index >= start_time) & (df_5m.index <= end_time)
+        df_range = df_5m.loc[mask]
+        if df_range.empty:
+            continue
+
+        mapped = {
+            "type": poi["type"],
+            "trend": poi["trend"],
+            "start_time": df_range.index[0],
+            "end_time": df_range.index[-1],
+            "leg_start_5m": leg_start_5m,
+            "leg_end_5m": leg_end_5m
+        }
+
+        if poi["type"] == "OB":
+            mapped.update({
+                "price_low": poi["price_low"],
+                "price_high": poi["price_high"],
+            })
+            low = poi["price_low"]
+            high = poi["price_high"]
+            poi_type = "OB"
+        elif poi["type"] == "LIQ":
+            mapped.update({
+                "price": poi["price_low"] if poi["price_low"] is not None else poi["price_high"]
+            })
+            low = poi["price_low"]
+            high = poi["price_high"]
+            poi_type = "LIQ"
+
+        mapped_pois.append(mapped)
+
+        # -----------------------------
+        # Logging 4H POI (existing)
+        # -----------------------------
+        trend_upper = poi["trend"].upper()
         if poi_type == "OB":
             reason = "displacement candle confirmed, base candle not broken"
-        else:  # LIQ
+        else:
             reason = "pullback candles met, not tapped yet"
 
-        # --- Log master ---
         log_event_master(
             idx=poi_idx,
             time=poi["time"],
@@ -436,11 +496,10 @@ def market_structure_mapping(
             candle=None,
         )
 
-        # --- Log 4H POI ---
         log_event(
             idx=poi_idx,
             t=poi["time"],
-            trend=trend,
+            trend=trend_upper,
             event="poi_detected",
             poi_type=poi_type,
             price_low=low,
@@ -449,21 +508,10 @@ def market_structure_mapping(
             validation_tf="4h"
         )
 
-        # --- Map 4H POI → 5M for plotting ---
-        poi_5m_idx = df_5m.index.get_indexer([poi["time"]], method="bfill")[0]
-        poi_5m_time = df_5m.index[poi_5m_idx]
+    print(f"{indent}🖌️ POIs mapped and logged: {len(mapped_pois)}")
 
-        log_event(
-            idx=poi_5m_idx,
-            t=poi_5m_time,
-            trend=trend,
-            event="poi_detected",
-            poi_type=poi_type,
-            price_low=low,
-            price_high=high,
-            active_poi=poi,
-            validation_tf="5m_plot"   # ← marks it for plotting only
-        )
+
+
                     
     # ==================================================
     # PHASE 4 — POST-PULLBACK MONITORING (5M DRIVEN)
@@ -638,6 +686,33 @@ def market_structure_mapping(
                 swing_high_time = df_4h.loc[df_4h['high'] == swing_high].index[0]
                 df_5m_new = df_5m.loc[df_5m.index >= swing_high_time]
 
+                # 1️⃣ Snapshot the leg
+                leg_5m_events.append({
+                    "event": "leg_end",
+                    "trend": trend,
+                    "start_time": leg_start_5m,
+                    "end_time": t5,
+                    "pois": [
+                        {
+                            "type": p["type"],
+                            "price_low": p["price_low"],
+                            "price_high": p["price_high"],
+                            "state": p.get("state", "UNTOUCHED")
+                        }
+                        for p in pois
+                    ],
+                    # ✅ MULTIPLE taps supported
+                    "tapped_pois": list(tapped_pois),
+                    # ✅ MULTIPLE protected 5M points supported
+                    "protected_5m_points": list(protected_5m_points),
+                    "choch_bos_events": list(leg_5m_structure),
+                    "five_m_obs": list(all_5m_obs),              
+                    "planned_trade": list(all_5m_trades)        
+                })
+
+                # 2️⃣ Persist the leg
+                all_legs_event_logs.append(list(leg_5m_events))
+                leg_5m_events.clear()
 
                 return market_structure_mapping(
                     df_4h=df_4h_new,
@@ -678,7 +753,33 @@ def market_structure_mapping(
                 swing_low_time = df_4h.loc[df_4h['low'] == swing_low].index[0]
                 df_5m_new = df_5m.loc[df_5m.index >= swing_low_time]
 
-                
+                # 1️⃣ Snapshot the leg
+                leg_5m_events.append({
+                    "event": "leg_end",
+                    "trend": trend,
+                    "start_time": leg_start_5m,
+                    "end_time": t5,
+                    "pois": [
+                        {
+                            "type": p["type"],
+                            "price_low": p["price_low"],
+                            "price_high": p["price_high"],
+                            "state": p.get("state", "UNTOUCHED")
+                        }
+                        for p in pois
+                    ],
+                    # ✅ MULTIPLE taps supported
+                    "tapped_pois": list(tapped_pois),
+                    # ✅ MULTIPLE protected 5M points supported
+                    "protected_5m_points": list(protected_5m_points),
+                    "choch_bos_events": list(leg_5m_structure),
+                    "five_m_obs": list(all_5m_obs),              
+                    "planned_trade": list(all_5m_trades)          
+                })
+
+                # 2️⃣ Persist the leg
+                all_legs_event_logs.append(list(leg_5m_events))
+                leg_5m_events.clear()
                 return market_structure_mapping(
                     df_4h=df_4h_new,
                     df_5m=df_5m_new,
@@ -739,7 +840,33 @@ def market_structure_mapping(
                 )[0]
 
                 df_5m_new = df_5m.iloc[start_5m_idx:]
+                # 1️⃣ Snapshot the leg
+                leg_5m_events.append({
+                    "event": "leg_end",
+                    "trend": trend,
+                    "start_time": leg_start_5m,
+                    "end_time": t5,
+                    "pois": [
+                        {
+                            "type": p["type"],
+                            "price_low": p["price_low"],
+                            "price_high": p["price_high"],
+                            "state": p.get("state", "UNTOUCHED")
+                        }
+                        for p in pois
+                    ],
+                    # ✅ MULTIPLE taps supported
+                    "tapped_pois": list(tapped_pois),
+                    # ✅ MULTIPLE protected 5M points supported
+                    "protected_5m_points": list(protected_5m_points),
+                    "choch_bos_events": list(leg_5m_structure) ,
+                    "five_m_obs": list(all_5m_obs),              
+                    "planned_trade": list(all_5m_trades)         
+                })
 
+                # 2️⃣ Persist the leg
+                all_legs_event_logs.append(list(leg_5m_events))
+                leg_5m_events.clear()
                 
                 return market_structure_mapping(
                     df_4h=df_4h_new,
@@ -804,7 +931,33 @@ def market_structure_mapping(
                 # ✅ Refine 5M as well (usual)
                 df_5m_new = df_5m.loc[df_5m.index >= t5]   # t5 = BOS time
 
-                                
+                # 1️⃣ Snapshot the leg
+                leg_5m_events.append({
+                    "event": "leg_end",
+                    "trend": trend,
+                    "start_time": leg_start_5m,
+                    "end_time": t5,
+                    "pois": [
+                        {
+                            "type": p["type"],
+                            "price_low": p["price_low"],
+                            "price_high": p["price_high"],
+                            "state": p.get("state", "UNTOUCHED")
+                        }
+                        for p in pois
+                    ],
+                    # ✅ MULTIPLE taps supported
+                    "tapped_pois": list(tapped_pois),
+                    # ✅ MULTIPLE protected 5M points supported
+                    "protected_5m_points": list(protected_5m_points),
+                    "choch_bos_events": list(leg_5m_structure),
+                    "five_m_obs": list(all_5m_obs),              
+                    "planned_trade": list(all_5m_trades)        
+                })
+
+                # 2️⃣ Persist the leg
+                all_legs_event_logs.append(list(leg_5m_events))
+                leg_5m_events.clear()            
                                 
                 return market_structure_mapping( 
                     df_4h=df_4h_new,
@@ -813,112 +966,17 @@ def market_structure_mapping(
                     bos_time=t5,
                     depth=depth + 1,
                 )
-        # --------------------------------------------------
-        # POI INVALIDATION (TYPE + ORDER AWARE)
-        # --------------------------------------------------
-        if poi_active:
-
-            active_poi = pois[0]
-            next_poi = pois[1] if len(pois) > 1 else None
-
-            p0_type = active_poi["type"]
-            p0_low  = active_poi["price_low"]
-            p0_high = active_poi["price_high"]
-
-            invalidation_level = None
-
-            # =========================
-            # BULLISH TREND
-            # =========================
-            if trend == "BULLISH":
-
-                if next_poi:
-                    p1_type = next_poi["type"]
-                    p1_low  = next_poi["price_low"]
-                    p1_high = next_poi["price_high"]
-
-                    if p0_type == "OB" and p1_type == "OB":
-                        invalidation_level = (p0_high + p1_high) / 2
-
-                    elif p0_type == "OB" and p1_type == "LIQ":
-                        invalidation_level = (p0_high + p1_low) / 2
-
-                    elif p0_type == "LIQ" and p1_type == "LIQ":
-                        invalidation_level = (p0_low + p1_low) / 2
-
-                    else:
-                        invalidation_level = None  # invalid structure
-
-                else:
-                    # No next POI → use swing low
-                    if p0_type == "OB":
-                        invalidation_level = (p0_high + swing_low) / 2
-                    else:  # LIQ
-                        invalidation_level = (p0_low + swing_low) / 2
-
-                if invalidation_level is not None and c5.low < invalidation_level:
-                    print(f"{indent}❌ POI INVALIDATED @ {t5}")
-                    print(f"{indent}   Level broken: {invalidation_level}")
-                    # 🔥 POI INVALIDATED — LOG HERE
-                    
-                    if pois:
-                        pois.pop(0)
-                        poi_active = False
-                        active_poi = None
-                        protected_5m_point = None
-                        continue
-
-            # =========================
-            # BEARISH TREND
-            # =========================
-            else:
-
-                if next_poi:
-                    p1_type = next_poi["type"]
-                    p1_low  = next_poi["price_low"]
-                    p1_high = next_poi["price_high"]
-
-                    if p0_type == "OB" and p1_type == "OB":
-                        invalidation_level = (p0_low + p1_low) / 2
-
-                    elif p0_type == "OB" and p1_type == "LIQ":
-                        invalidation_level = (p0_low + p1_high) / 2
-
-                    elif p0_type == "LIQ" and p1_type == "LIQ":
-                        invalidation_level = (p0_high + p1_high) / 2
-
-                    else:
-                        invalidation_level = None
-
-                else:
-                    if p0_type == "OB":
-                        invalidation_level = (p0_low + swing_high) / 2
-                    else:  # LIQ
-                        invalidation_level = (p0_high + swing_high) / 2
-
-                if invalidation_level is not None and c5.high > invalidation_level:
-                    print(f"{indent}❌ POI INVALIDATED @ {t5}")
-                    print(f"{indent}   Level broken: {invalidation_level}")
-
-                   
-                    if pois:
-                        pois.pop(0)
-                        poi_active = False
-                        active_poi = None
-                        protected_5m_point = None
-                        continue
-
+        
         # --------------------------------------------------
         # 3️⃣ POI TAP (TREND + TYPE BASED)
         # --------------------------------------------------
-        if not poi_active and pois:
-
-            active_poi = pois[0]   # first POI only
+        if not poi_active:
+            active_poi = next((p for p in pois if p.get("state") != "INVALIDATED"), None)
+            if not active_poi:
+                continue
             poi_type = active_poi["type"]
-
             poi_low = active_poi["price_low"]
             poi_high = active_poi["price_high"]
-            poi_tapped = False
 
             if trend == "BULLISH":
 
@@ -946,36 +1004,23 @@ def market_structure_mapping(
 
             if poi_tapped:
                 poi_active = True
-
-                # ⭐ STORE POI ACTIVATION FOR PLOTTING
                 active_poi["activation_time"] = t5
-                active_poi["activation_idx"] = df_5m.index.get_loc(t5)
+                active_poi["activation_idx"] = df_5m.index.get_indexer(
+                    [t5], method="nearest"
+                )[0]
 
                 print(f"{indent}🔥 POI TAPPED ({poi_type}) @ {t5}")
                 poi_time_4h = active_poi["time"]
                 poi_5m_idx = df_5m.index.get_indexer([poi_time_4h], method="bfill")[0]
                 active_poi["start_5m_time"] = df_5m.index[poi_5m_idx]
+                tapped_pois.append({
+                    "type": poi_type,
+                    "price_low": poi_low,
+                    "price_high": poi_high,
+                    "tap_time": t5
+                })
+
                 
-                # 🔥 POI TAPPED — LOG HERE
-                log_event(
-                    idx=df_5m.index.get_loc(t5),
-                    t=t5,
-                    trend=trend,
-                    event="poi_tapped",
-                    validation_tf="5m_plot",
-                    active_poi=active_poi,
-                    swing_high=swing_high,
-                    swing_low=swing_low,
-                    poi_type=active_poi["type"],
-                    poi_low=active_poi["price_low"],
-                    poi_high=active_poi["price_high"],
-                    poi_activation_idx=df_5m.index.get_loc(t5),
-                )
-                # --- Collect only NEW 5m_plot events for this leg ---
-                leg_5m_events = [e for e in EVENT_LOG if getattr(e, "validation_tf", None) == "5m_plot" and e.index >= active_poi["activation_idx"]]
-                all_legs_event_logs.append(leg_5m_events)
-
-
                 # 🔹 CALL 5M STRUCTURE FUNCTION HERE
                 opp_trend = "BEARISH" if trend == "BULLISH" else "BULLISH"
 
@@ -985,7 +1030,6 @@ def market_structure_mapping(
                     df=m5_slice,
                     trend=opp_trend,
                 )
-                poi_tapped = False
                 # Check if return value is valid (not None and not 0.0 or negative)
                 if protected_5m_point is None or protected_5m_point <= 0:
                     print(f"{indent}❌ Invalid 5M structure point: {protected_5m_point}")
@@ -993,26 +1037,148 @@ def market_structure_mapping(
                     protected_5m_point = None
                     continue
                 print(f"{indent}✅ 5M Protected Point: {protected_5m_point}")
-                
-            else:
-                continue
+                # whenever you detect a protected 5M point:
+                if protected_5m_point is not None:
+                    nearest_idx = df_5m.index.get_indexer([t5], method="nearest")[0]
+                    protected_5m_points.append({
+                        "t": t5,
+                        "trend": trend.upper(),
+                        "event": "protected_5m_point",
+                        "poi_type": "STRUCTURE",
+                        "price_low": protected_5m_point,
+                        "price_high": protected_5m_point
+                    })
+                    print(f"{indent}📌 5M Protected Point logged: {protected_5m_point}")
+                else:
+                    print(f"{indent}❌ Invalid 5M structure point: {protected_5m_point}")
+                    poi_active = False
+                    protected_5m_point = None
+                    continue
+        # --------------------------------------------------
+        # POI INVALIDATION (TYPE + ORDER AWARE)
+        # --------------------------------------------------
+        if poi_active and active_poi:
 
+            current_idx = df_5m.index.get_indexer([t5], method="nearest")[0]
+            # ⛔ DO NOT invalidate on the tap candle
+            if current_idx <= active_poi["activation_idx"]:
+                pass
+            else:
+                valid_pois = [p for p in pois if p.get("state") != "INVALIDATED"]
+                if active_poi not in valid_pois:
+                    continue
+                idx0 = valid_pois.index(active_poi)
+                next_poi = valid_pois[idx0 + 1] if idx0 + 1 < len(valid_pois) else None
+
+
+                p0_type = active_poi["type"]
+                p0_low  = active_poi["price_low"]
+                p0_high = active_poi["price_high"]
+
+                invalidation_level = None
+
+                # =========================
+                # BULLISH TREND
+                # =========================
+                if trend == "BULLISH":
+
+                    if next_poi:
+                        p1_type = next_poi["type"]
+                        p1_low  = next_poi["price_low"]
+                        p1_high = next_poi["price_high"]
+
+                        if p0_type == "OB" and p1_type == "OB":
+                            invalidation_level = (p0_high + p1_high) / 2
+
+                        elif p0_type == "OB" and p1_type == "LIQ":
+                            invalidation_level = (p0_high + p1_low) / 2
+
+                        elif p0_type == "LIQ" and p1_type == "LIQ":
+                            invalidation_level = (p0_low + p1_low) / 2
+
+                        else:
+                            invalidation_level = None  # invalid structure
+
+                    else:
+                        # No next POI → use swing low
+                        if p0_type == "OB":
+                            invalidation_level = (p0_high + swing_low) / 2
+                        else:  # LIQ
+                            invalidation_level = (p0_low + swing_low) / 2
+
+                    if invalidation_level is not None and c5.low < invalidation_level:
+                        print(f"{indent}❌ POI INVALIDATED @ {t5}")
+                        print(f"{indent}   Level broken: {invalidation_level}")
+                        # 🔥 POI INVALIDATED — LOG HERE
+                        
+                        if active_poi:
+                            active_poi["state"] = "INVALIDATED"
+                            poi_active = False
+                            active_poi = None
+                            poi_tapped = False
+                            protected_5m_point = None
+                            continue
+
+                # =========================
+                # BEARISH TREND
+                # =========================
+                else:
+
+                    if next_poi:
+                        p1_type = next_poi["type"]
+                        p1_low  = next_poi["price_low"]
+                        p1_high = next_poi["price_high"]
+
+                        if p0_type == "OB" and p1_type == "OB":
+                            invalidation_level = (p0_low + p1_low) / 2
+
+                        elif p0_type == "OB" and p1_type == "LIQ":
+                            invalidation_level = (p0_low + p1_high) / 2
+
+                        elif p0_type == "LIQ" and p1_type == "LIQ":
+                            invalidation_level = (p0_high + p1_high) / 2
+
+                        else:
+                            invalidation_level = None
+
+                    else:
+                        if p0_type == "OB":
+                            invalidation_level = (p0_low + swing_high) / 2
+                        else:  # LIQ
+                            invalidation_level = (p0_high + swing_high) / 2
+
+                    if invalidation_level is not None and c5.high > invalidation_level:
+                        print(f"{indent}❌ POI INVALIDATED @ {t5}")
+                        print(f"{indent}   Level broken: {invalidation_level}")
+
+                    
+                        if active_poi:
+                            active_poi["state"] = "INVALIDATED"
+                            poi_active = False
+                            active_poi = None
+                            poi_tapped = False
+                            protected_5m_point = None
+                            continue
+
+                
         # --------------------------------------------------
         # 5️⃣ 5M STRUCTURE CHECK (CHOCH / BOS LOGIC)
         # --------------------------------------------------
         if protected_5m_point is not None:
             if trend == "BULLISH":
                 # opp_trend is BEARISH, so protected_5m_point is a SWING HIGH
-                # CHOCH = break BELOW swing high
+                # CHOCH = break above swing high
                 if c5.close > protected_5m_point:
                     broken_level = protected_5m_point
                     choch_validated = True
                     poi_active = False
-                    poi_tapped = False
-                    if pois:
-                        pois.pop(0)
+                    if active_poi:
+                        active_poi["state"] = "INVALIDATED"
+                        active_poi = None
+                        poi_tapped = False
+                        
                     protected_5m_point = None
-
+                
 
                 elif c5.close < c5.open:
                     opp_pullback_count += 1
@@ -1025,18 +1191,27 @@ def market_structure_mapping(
                     new_level = c5.high
                     protected_5m_point = new_level
                     opp_pullback_count = 0
+                    # Append BOS event here safely
+                    leg_5m_structure.append({
+                        "event": "BOS",
+                        "t": t5,
+                        "price": new_level,
+                        "trend": trend.upper()
+                    })
 
                   
             else:
                 # opp_trend is BULLISH, so protected_5m_point is a SWING LOW
-                # CHOCH = break ABOVE swing low
+                # CHOCH = break below swing low
                 if c5.close < protected_5m_point:
                     broken_level = protected_5m_point
                     choch_validated = True
                     poi_active = False
-                    poi_tapped = False
-                    if pois:
-                        pois.pop(0)
+                    if active_poi:
+                        active_poi["state"] = "INVALIDATED"
+                        active_poi = None
+                        poi_tapped = False
+
                     protected_5m_point = None
 
                     
@@ -1052,6 +1227,23 @@ def market_structure_mapping(
 
                     protected_5m_point = new_level
                     opp_pullback_count = 0
+                    # Append BOS event here safely
+                    leg_5m_structure.append({
+                        "event": "BOS",
+                        "t": t5,
+                        "price": new_level,
+                        "trend": trend.upper()
+                    })
+        # ---------------------------
+        # Append CHOCH/BOS to structure list
+        # ---------------------------
+        if choch_validated:
+            leg_5m_structure.append({
+                "event": "CHOCH",
+                "t": t5,
+                "price": broken_level,
+                "trend": trend.upper()
+            })
 
         # --------------------------------------------------
         # 6️⃣ 5M CHOCH → TRADE (EXECUTE ONCE, THEN MANAGE)
@@ -1076,7 +1268,7 @@ def market_structure_mapping(
                 choch_validated = False
                 continue
 
-            trade = plan_trade_from_choch_leg(
+            trade,all_obs = plan_trade_from_choch_leg(
                 choch_leg_df=choch_leg_df,
                 trend=trend,
             )
@@ -1084,6 +1276,27 @@ def market_structure_mapping(
             print(trade)
 
             if trade:
+                # ✅ Store all OBs and trade info globally
+                all_5m_obs.append({
+                    "choch_leg_start": choch_leg_start,
+                    "choch_leg_end": t5,
+                    "trend": trend,
+                    "ob_time": trade["ob_time"],
+                    "ob_high": trade["ob_high"],
+                    "ob_low": trade["ob_low"]
+                })
+                all_5m_trades.append({
+                    "choch_leg_start": choch_leg_start,
+                    "choch_leg_end": t5,
+                    "trend": trend,
+                    "entry": trade["entry"],
+                    "sl": trade["sl"],
+                    "tp": trade["tp"],
+                    "direction": trade["direction"],
+                    "ob_time": trade["ob_time"],
+                    "ob_high": trade["ob_high"],
+                    "ob_low": trade["ob_low"]
+                })
 
                 # -------------------------------
                 # TP VALIDATION AGAINST HTF SWING
@@ -1124,5 +1337,7 @@ def market_structure_mapping(
             else:
                 print(f"{indent}❌ Trade logic rejected")
                 choch_validated = False
-    
+    all_legs_event_logs.append(list(leg_5m_events))
+    leg_5m_events.clear()  # ready for next leg
+
     return EVENT_LOG

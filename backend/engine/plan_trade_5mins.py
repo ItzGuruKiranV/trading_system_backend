@@ -152,4 +152,4 @@ def plan_trade_from_choch_leg(
     print(f"Risk-Reward: 1:{trade['rr']}")
     print("==============================\n")
 
-    return trade
+    return trade, valid_obs
