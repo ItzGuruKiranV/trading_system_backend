@@ -16,7 +16,7 @@ def plan_trade_from_choch_leg(
 
     if choch_leg_df is None or len(choch_leg_df) < 2:
         print("❌ Invalid or too-small 5M leg")
-        return None
+        return None, None
 
     df = choch_leg_df.copy()
     df = df[["open", "high", "low", "close"]]
@@ -84,7 +84,7 @@ def plan_trade_from_choch_leg(
     # ======================================================
     if not valid_obs:
         print("\n❌ No 5M OB found → No trade\n")
-        return None
+        return None,None
 
     # ======================================================
     # 3️⃣ PRINT ALL FOUND OBs
@@ -111,21 +111,25 @@ def plan_trade_from_choch_leg(
     first_candle = df.iloc[0]
 
     if is_bullish:
-        stop_loss = first_candle["low"] - 4 * pip_value
+        stop_loss = exec_ob["ob_low"] - 4 * pip_value
         entry = exec_ob["ob_high"]
         risk = entry - stop_loss
         take_profit = entry + 3 * risk
         direction = "BUY"
     else:
-        stop_loss = first_candle["high"] + 4 * pip_value
+        stop_loss = exec_ob["ob_high"] + 4 * pip_value
         entry = exec_ob["ob_low"]
         risk = stop_loss - entry
         take_profit = entry - 3 * risk
         direction = "SELL"
 
     if risk <= 0:
+        print(
+                f"[RISK DEBUG] entry={entry}, sl={stop_loss}, risk={risk}"
+            )
         print("❌ Invalid risk → Trade skipped\n")
-        return None
+        return None, None   
+        
 
     trade = {
         "direction": direction,

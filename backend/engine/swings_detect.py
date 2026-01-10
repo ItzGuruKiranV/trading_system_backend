@@ -193,6 +193,16 @@ def market_structure_mapping(
     pullback_time = None
     swinh_high_time=None
     swing_low_time=None
+    protected_5m_point = None
+    protected_5m_time = None
+
+    swing_low_5m = None
+    swing_low_range_start = None
+
+    swing_high_5m = None
+    swing_high_range_start = None
+
+    opp_pullback_count = 0
 
     pullback_df = df_4h.loc[df_4h.index >= bos_time]
 
@@ -535,6 +545,10 @@ def market_structure_mapping(
     entry_filled = False
 
     print(f"{indent}▶ Monitoring 5M candles after pullback...")
+    in_pullback = False
+    temp_pullback_high = None
+    temp_pullback_low = None
+
 
     for t5, c5 in df_5m_post.iterrows():
 
@@ -954,7 +968,6 @@ def market_structure_mapping(
                     "five_m_obs": list(all_5m_obs),              
                     "planned_trade": list(all_5m_trades)        
                 })
-
                 # 2️⃣ Persist the leg
                 all_legs_event_logs.append(list(leg_5m_events))
                 leg_5m_events.clear()            
@@ -966,7 +979,7 @@ def market_structure_mapping(
                     bos_time=t5,
                     depth=depth + 1,
                 )
-        
+      
         # --------------------------------------------------
         # 3️⃣ POI TAP (TREND + TYPE BASED)
         # --------------------------------------------------
@@ -1019,17 +1032,21 @@ def market_structure_mapping(
                     "price_high": poi_high,
                     "tap_time": t5
                 })
-
                 
                 # 🔹 CALL 5M STRUCTURE FUNCTION HERE
                 opp_trend = "BEARISH" if trend == "BULLISH" else "BULLISH"
-
-                m5_slice = df_5m.loc[pullback_time:t5]
+                if trend == "BULLISH":
+                    swing_high_time = df_4h.loc[df_4h['high'] == swing_high].index[0]
+                    m5_slice = df_5m.loc[swing_high_time:t5]
+                else:
+                    swing_low_time = df_4h.loc[df_4h['low'] == swing_low].index[0]
+                    m5_slice = df_5m.loc[swing_low_time:t5]
 
                 protected_5m_point = process_structure_and_return_last_swing(
                     df=m5_slice,
                     trend=opp_trend,
                 )
+                protected_5m_time = t5
                 # Check if return value is valid (not None and not 0.0 or negative)
                 if protected_5m_point is None or protected_5m_point <= 0:
                     print(f"{indent}❌ Invalid 5M structure point: {protected_5m_point}")
@@ -1039,7 +1056,6 @@ def market_structure_mapping(
                 print(f"{indent}✅ 5M Protected Point: {protected_5m_point}")
                 # whenever you detect a protected 5M point:
                 if protected_5m_point is not None:
-                    nearest_idx = df_5m.index.get_indexer([t5], method="nearest")[0]
                     protected_5m_points.append({
                         "t": t5,
                         "trend": trend.upper(),
@@ -1178,27 +1194,89 @@ def market_structure_mapping(
                         poi_tapped = False
                         
                     protected_5m_point = None
-                
+                    swing_low_5m = None
+                    swing_high_5m = None
+                    swing_low_range_start = None
+                    swing_high_range_start = None
 
-                elif c5.close < c5.open:
-                    opp_pullback_count += 1
-                elif protected_5m_point is not None and c5.low < protected_5m_point and opp_pullback_count < 2:
-                    opp_pullback_count = 0
+                    in_pullback = False
+                    temp_pullback_high = None
+                    temp_pullback_low = None
+                    opp_pullback_count = 0   
 
-                # 🔹 BOS after valid pullback (new higher high)
-                if protected_5m_point is not None and opp_pullback_count >= 2 and c5.high > protected_5m_point:
-                    old_level = protected_5m_point
-                    new_level = c5.high
-                    protected_5m_point = new_level
+                elif c5.close > c5.open and swing_low_5m is None and not choch_validated:
+                    # GREEN candle = pullback candle in bearish leg
+                    if not in_pullback:
+                        in_pullback = True
+                        opp_pullback_count = 1
+                        temp_pullback_high = c5.high
+                        temp_pullback_low = c5.low
+                    else:
+                        opp_pullback_count += 1
+                        temp_pullback_high = max(temp_pullback_high, c5.high)
+                        temp_pullback_low = min(temp_pullback_low, c5.low)
+
+                    print("5m opp pullback count (bullish leg) with time", opp_pullback_count, t5)
+
+                # ❌ INVALID pullback → bearish continuation before confirmation
+                elif in_pullback and c5.low < temp_pullback_low and opp_pullback_count < 2:
+                    in_pullback = False
                     opp_pullback_count = 0
-                    # Append BOS event here safely
+                    temp_pullback_high = None
+                    temp_pullback_low = None
+
+                # ----------------------------------------------
+                # 3️⃣ Pullback CONFIRMED → calculate swing LOW
+                # ----------------------------------------------
+                if (
+                    opp_pullback_count == 2 and swing_low_5m is None
+                ):
+                    # calculate swing low between protected swing high and pullback candle
+                    swing_low_range_start = protected_5m_time
+
+                    swing_low_5m = df_5m.loc[
+                        swing_low_range_start:t5, "low"
+                    ].min()
+                    print("calculated swing low 5m:", swing_low_5m)
+                # ----------------------------------------------
+                # 4️⃣ BOS = break below calculated swing LOW
+                # ----------------------------------------------
+                if swing_low_5m is not None and c5.low <swing_low_5m:
+                    bos_time = t5
+                    print("5m BOS time:", bos_time)
                     leg_5m_structure.append({
                         "event": "BOS",
-                        "t": t5,
-                        "price": new_level,
-                        "trend": trend.upper()
+                        "t": bos_time,
+                        "price": c5.low,
+                        "trend": "BEARISH"
                     })
+                    
+                    # ------------------------------------------
+                    # 5️⃣ UPDATE protected swing HIGH
+                    # ------------------------------------------
+                    new_protected_high = df_5m.loc[
+                        swing_low_range_start:bos_time, "high"
+                    ].max()
 
+                    protected_5m_point = new_protected_high
+                    protected_5m_time = bos_time
+                    print("new protected 5m point (swing high):", protected_5m_point)
+                    protected_5m_points.append({
+                        "t": t5,
+                        "trend": trend.upper(),
+                        "event": "protected_5m_point",
+                        "poi_type": "STRUCTURE",
+                        "price_low": protected_5m_point,
+                        "price_high": protected_5m_point
+                    })
+                    # reset for next structure cycle
+                    opp_pullback_count = 0
+                    swing_low_5m = None
+                    swing_low_range_start = None
+
+                    in_pullback = False
+                    temp_pullback_high = None
+                    temp_pullback_low = None
                   
             else:
                 # opp_trend is BULLISH, so protected_5m_point is a SWING LOW
@@ -1213,27 +1291,93 @@ def market_structure_mapping(
                         poi_tapped = False
 
                     protected_5m_point = None
+                    swing_low_5m = None
+                    swing_high_5m = None
+                    swing_low_range_start = None
+                    swing_high_range_start = None
 
-                    
-                elif c5.close > c5.open:
-                    opp_pullback_count += 1
-                elif protected_5m_point is not None and c5.high > protected_5m_point and opp_pullback_count < 2:
+                    in_pullback = False
+                    temp_pullback_high = None
+                    temp_pullback_low = None
                     opp_pullback_count = 0
+                                
+                elif c5.close < c5.open and swing_high_5m is None and not choch_validated:
+                    # RED candle = pullback candle in bullish leg
+                    if not in_pullback:
+                        in_pullback = True
+                        opp_pullback_count = 1
+                        temp_pullback_high = c5.high
+                        temp_pullback_low = c5.low
+                    else:
+                        opp_pullback_count += 1
+                        temp_pullback_high = max(temp_pullback_high, c5.high)
+                        temp_pullback_low = min(temp_pullback_low, c5.low)
 
-                # 🔹 BOS after valid pullback (new lower low)
-                if protected_5m_point is not None and opp_pullback_count >= 2 and c5.low < protected_5m_point:
-                    old_level = protected_5m_point      # 🔑 store broken level
-                    new_level = c5.low                  # 🔑 new LL
+                    print("5m opp pullback count (bullish leg) with time", opp_pullback_count, t5)
 
-                    protected_5m_point = new_level
+                # ❌ INVALID pullback → bullish continuation before confirmation
+                elif in_pullback and c5.high > temp_pullback_high and opp_pullback_count < 2:
+                    in_pullback = False
                     opp_pullback_count = 0
-                    # Append BOS event here safely
+                    temp_pullback_high = None
+                    temp_pullback_low = None
+
+                # ----------------------------------------------
+                # 3️⃣ Pullback CONFIRMED → calculate swing HIGH
+                # ----------------------------------------------
+                if (
+                    opp_pullback_count == 2 and swing_high_5m is None
+                ):
+                    # find candle where protected swing LOW was formed
+                    swing_high_range_start = protected_5m_time
+
+                    swing_high_5m = df_5m.loc[
+                        swing_high_range_start:t5, "high"
+                    ].max()
+                    print("calculated swing high 5m:", swing_high_5m)
+
+                # ----------------------------------------------
+                # 4️⃣ BOS = break above calculated swing HIGH
+                # ----------------------------------------------
+                if swing_high_5m is not None and c5.high > swing_high_5m:
+                    bos_time = t5
+                    print("5m BOS time:", bos_time)
+
                     leg_5m_structure.append({
                         "event": "BOS",
-                        "t": t5,
-                        "price": new_level,
-                        "trend": trend.upper()
+                        "t": bos_time,
+                        "price": c5.high,
+                        "trend": "BULLISH"
                     })
+                    
+                    # ------------------------------------------
+                    # 5️⃣ UPDATE protected swing LOW
+                    # ------------------------------------------
+                    new_protected_low = df_5m.loc[
+                        swing_high_range_start:bos_time, "low"
+                    ].min()
+
+                    protected_5m_point = new_protected_low
+                    protected_5m_time = bos_time   # 🔴 REQUIRED
+
+                    print("new protected 5m point (swing low):", protected_5m_point)
+                    protected_5m_points.append({
+                        "t": t5,
+                        "trend": trend.upper(),
+                        "event": "protected_5m_point",
+                        "poi_type": "STRUCTURE",
+                        "price_low": protected_5m_point,
+                        "price_high": protected_5m_point
+                    })
+
+                    # reset for next structure cycle
+                    opp_pullback_count = 0
+                    swing_high_5m = None
+                    swing_high_range_start = None
+
+                    in_pullback = False
+                    temp_pullback_high = None
+                    temp_pullback_low = None
         # ---------------------------
         # Append CHOCH/BOS to structure list
         # ---------------------------
@@ -1244,6 +1388,7 @@ def market_structure_mapping(
                 "price": broken_level,
                 "trend": trend.upper()
             })
+            
 
         # --------------------------------------------------
         # 6️⃣ 5M CHOCH → TRADE (EXECUTE ONCE, THEN MANAGE)

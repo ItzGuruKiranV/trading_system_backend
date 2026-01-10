@@ -35,7 +35,7 @@ from engine.swings_detect import market_structure_mapping, MASTER_LOG,all_legs_e
 # FIXED INPUT FILE
 # ==================================================
 MINUTE_CSV_PATH = Path(
-    r"D:\Trading Project\trading_system_backend\HISTDATA_COM_MT_EURUSD_M12022\DAT_MT_EURUSD_M1_2022.csv"
+    r"D:\Trading Project\trading_system_backend\HISTDATA_COM_MT_EURUSD_M12023\DAT_MT_EURUSD_M1_2023.csv"
 )
 
 # ==================================================
@@ -81,15 +81,15 @@ def main():
         # --------------------------------------------------
         # FILTER: LAST 3 MONTHS ONLY
         # --------------------------------------------------
-        print("\n[Filter] Using last 3 months only")
+        # print("\n[Filter] Using last 3 months only")
 
-        end_time = df_1m.index.max()
-        start_time = end_time - pd.DateOffset(months=3)
+        # end_time = df_1m.index.max()
+        # start_time = end_time - pd.DateOffset(months=3)
 
-        df_1m = df_1m.loc[df_1m.index >= start_time]
+        # df_1m = df_1m.loc[df_1m.index >= start_time]
 
-        print(f"1M range : {df_1m.index.min()} → {df_1m.index.max()}")
-        print(f"Remaining candles: {len(df_1m)}")
+        # print(f"1M range : {df_1m.index.min()} → {df_1m.index.max()}")
+        # print(f"Remaining candles: {len(df_1m)}")
 
         print(f"✅ Loaded {len(df_1m)} minute candles")
 

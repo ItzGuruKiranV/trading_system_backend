@@ -2,6 +2,37 @@ import pandas as pd
 from typing import List, Dict
 
 
+import pandas as pd
+
+def sort_pois_merged(pois):
+    def bull_key(p):
+        # For BULLISH, OB uses price_high, LIQ uses price_low
+        if p['type'] == 'OB':
+            return p['price_high']
+        elif p['type'] == 'LIQ':
+            return p['price_low']
+        return 0
+
+    def bear_key(p):
+        # For BEARISH, OB uses price_low, LIQ uses price_high
+        if p['type'] == 'OB':
+            return p['price_low']
+        elif p['type'] == 'LIQ':
+            return p['price_high'] if p['price_high'] is not None else float('inf')
+        return 0
+
+    bull_pois = [p for p in pois if p['trend'] == 'BULLISH']
+    bear_pois = [p for p in pois if p['trend'] == 'BEARISH']
+
+    # Sort BULLISH descending
+    bull_sorted = sorted(bull_pois, key=bull_key, reverse=True)
+    # Sort BEARISH ascending
+    bear_sorted = sorted(bear_pois, key=bear_key)
+
+    # Merge
+    return bull_sorted + bear_sorted
+
+
 def detect_pois_from_swing(
     ohlc_df: pd.DataFrame,
     trend: str,
@@ -180,4 +211,6 @@ def detect_pois_from_swing(
     # FINAL OUTPUT
     # ======================================================
     pois = merged_obs + liqs
-    return pois
+    sorted_pois = sort_pois_merged(pois)
+    print(sorted_pois)
+    return sorted_pois

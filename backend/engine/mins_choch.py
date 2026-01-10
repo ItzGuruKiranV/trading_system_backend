@@ -1,46 +1,42 @@
 import pandas as pd
-
-
+from typing import List, Dict
 def process_structure_and_return_last_swing(
     df: pd.DataFrame,
     trend: str,
     min_pullback_candles: int = 2,
-    retrace_pct: float = 0.35,
+    retrace_pct: float = 0.99,
 ):
-    """
-    Maps market structure on sliced DF.
-
-    Rules:
-    - Bullish  → returns latest SWING LOW price
-    - Bearish  → returns latest SWING HIGH price
-    - BOS / CHOCH printed
-    - Pullback = 2 opposite candles OR 35% retracement
-    """
 
     highs = df["high"].values
     lows = df["low"].values
     opens = df["open"].values
     closes = df["close"].values
-    idxs = df.index
+    times = df.index
 
     is_bullish = trend.lower() == "bullish"
 
     # --------------------------------
-    # INITIAL SWINGS (FIRST CANDLE)
+    # INITIAL STRUCTURE
     # --------------------------------
-    swing_high = highs[0]
-    swing_low = lows[0]
+    if is_bullish:
+            swing_low = lows[0]
+    else:
+            swing_high = highs[0]
+
+    temp_high = None
+    temp_high_idx = None
+
+    temp_low = None
+    temp_low_idx = None
+
+    pullback_count = 0
+    swings: List[Dict] = []
+
+    pullback_started = False
+    valid_pullback=False
 
     last_confirmed_swing_high = None
     last_confirmed_swing_low = None
-
-    pullback_count = 0
-
-    print("\n====== STRUCTURE TRACE ======")
-    print(f"Initial Trend: {trend.upper()}")
-    print(f"Initial Swing High: {swing_high}")
-    print(f"Initial Swing Low : {swing_low}\n")
-
     # --------------------------------
     # MAIN LOOP
     # --------------------------------
@@ -50,112 +46,131 @@ def process_structure_and_return_last_swing(
         low = lows[i]
         open_ = opens[i]
         close = closes[i]
-        time = idxs[i]
+        time = times[i]
 
         is_bull_candle = close > open_
         is_bear_candle = close < open_
 
-        # ===============================
-        # BULLISH STRUCTURE
-        # ===============================
+
+        # ==================================================
+        # 🔵 BULLISH STRUCTURE
+        # ==================================================
         if is_bullish:
 
-            # Track new highs
-            if high > swing_high:
-                swing_high = high
+            # Track impulse high
+            if (temp_high is None or high > temp_high) and (pullback_count == 0 or pullback_count == 1):
+                temp_high = high
+                temp_high_idx = i
                 pullback_count = 0
+                continue
 
             # Pullback detection
             if is_bear_candle:
                 pullback_count += 1
-            else:
-                pullback_count = 0
 
-            retrace = (swing_high - low) / max(swing_high - swing_low, 1e-9)
+            retrace = (temp_high - low) / max(temp_high - swing_low, 1e-9)
 
             valid_pullback = (
                 pullback_count >= min_pullback_candles
                 or retrace >= retrace_pct
             )
 
-            # BOS → higher high after pullback
-            if valid_pullback and high > swing_high:
-                last_confirmed_swing_low = swing_low
-                swing_high = high
+
+
+            # ---------------------------
+            # BOS → CONFIRM SWINGS
+            # ---------------------------
+            if valid_pullback and high > temp_high:
+
+                swing_high = temp_high
+                swings.append({
+                    "type": "swing_high",
+                    "time": times[temp_high_idx],
+                    "price": swing_high
+                })
+
+                swing_low = lows[temp_high_idx:i+1].min()
+                swings.append({
+                    "type": "swing_low",
+                    "time": time,
+                    "price": swing_low
+                })
+
+                temp_high = high
+                temp_high_idx = i
                 pullback_count = 0
+                last_confirmed_swing_high = None
 
-
-            # Update swing low only AFTER BOS
+            # CHOCH
             if valid_pullback and low < swing_low:
-                swing_low = low
-
-            # CHOCH → break below swing low
-            if low < swing_low:
+                swing_high = temp_high
+                swings.append({
+                    "type": "swing_high",
+                    "time": times[temp_high_idx],
+                    "price": swing_high
+                })
                 is_bullish = False
+                temp_low = low
+                temp_low_idx = i
                 pullback_count = 0
 
-        # ===============================
-        # BEARISH STRUCTURE
-        # ===============================
+        # ==================================================
+        # 🔴 BEARISH STRUCTURE
+        # ==================================================
         else:
 
-            # Track new lows
-            if low < swing_low:
-                swing_low = low
+            # Track impulse low
+            if (temp_low is None or low < temp_low) and (pullback_count == 0 or pullback_count == 1):
+                temp_low = low
+                temp_low_idx = i
                 pullback_count = 0
+                continue
 
             # Pullback detection
             if is_bull_candle:
                 pullback_count += 1
-            else:
-                pullback_count = 0
 
-            retrace = (high - swing_low) / max(swing_high - swing_low, 1e-9)
+            retrace = (high - temp_low) / max(swing_high - temp_low, 1e-9)
 
             valid_pullback = (
                 pullback_count >= min_pullback_candles
                 or retrace >= retrace_pct
             )
+            # ---------------------------
+            # BOS → CONFIRM SWINGS
+            # ---------------------------
+            if valid_pullback and low < temp_low:
 
-            # BOS → lower low after pullback
-            if valid_pullback and low < swing_low:
-                last_confirmed_swing_high = swing_high
-                swing_low = low
+                swing_low = temp_low
+                swings.append({
+                    "type": "swing_low",
+                    "time": times[temp_low_idx],
+                    "price": swing_low
+                })
+
+                swing_high = highs[temp_low_idx:i+1].max()
+                swings.append({
+                    "type": "swing_high",
+                    "time": time,
+                    "price": swing_high
+                })
+
+                temp_low = low
+                temp_low_idx = i
                 pullback_count = 0
 
-
-            # Update swing high only AFTER BOS
+            # CHOCH
             if valid_pullback and high > swing_high:
-                swing_high = high
-
-            # CHOCH → break above swing high
-            if high > swing_high:
+                swing_low = temp_low
+                swings.append({
+                    "type": "swing_low",
+                    "time": times[temp_low_idx],
+                    "price": swing_low
+                })
                 is_bullish = True
+                temp_high = high
+                temp_high_idx = i
                 pullback_count = 0
 
-    # --------------------------------
-    # FINAL RETURN
-    # --------------------------------
-    print("\n====== FINAL STRUCTURE ======")
-
-    if is_bullish:
-        protected_low = (
-            last_confirmed_swing_low
-            if last_confirmed_swing_low is not None
-            else swing_low
-        )
-
-        print("Final Trend: BULLISH")
-        print(f"Protected Swing LOW: {protected_low}")
-        return protected_low
-    else:
-        protected_high = (
-            last_confirmed_swing_high
-            if last_confirmed_swing_high is not None
-            else swing_high
-        )
-
-        print("Final Trend: BEARISH")
-        print(f"Protected Swing HIGH: {protected_high}")
-        return protected_high
-
+    final_level = swing_low if trend.lower() is "bullish" else swing_high
+    return final_level
