@@ -13,147 +13,92 @@ def plan_trade_from_choch_leg(
     select the execution OB closest to price,
     and plan a mechanical 1:3 trade.
     """
-
     if choch_leg_df is None or len(choch_leg_df) < 2:
         print("❌ Invalid or too-small 5M leg")
         return None, None
 
     df = choch_leg_df.copy()
     df = df[["open", "high", "low", "close"]]
-    df["range"] = df["high"] - df["low"]
+    # ======================================================
+    # 1️⃣ LEG 50% CALCULATION (NO OB LOGIC)
+    # ======================================================
+    leg_high = df["high"].max()
+    leg_low = df["low"].min()
 
-    is_bullish = trend.lower() == "bullish"
+    mid_price = (leg_high + leg_low) / 2
+    leg_start_time = df.index[0]
+    leg_end_time = df.index[-1]
     idxs = df.index
-    n = len(df)
 
     # ======================================================
-    # 1️⃣ OB SCAN (NO PRINTING YET)
+    # HTF → CHOCH TREND MAPPING
     # ======================================================
-    valid_obs: List[Dict] = []
+    htf_trend = trend.lower()
 
-    for i in range(0, n - 1):
-
-        ob_candle = df.iloc[i]
-        ob_low = ob_candle["low"]
-        ob_high = ob_candle["high"]
-        ob_range = ob_candle["range"]
-
-        if ob_range <= 0:
-            continue
-
-        next_candle = df.iloc[i + 1]
-        next_range = next_candle["range"]
-
-        # Displacement check
-        if is_bullish:
-            displacement_valid = (
-                next_candle["close"] > next_candle["open"]
-                and next_range >= displacement_multiplier * ob_range
-            )
-        else:
-            displacement_valid = (
-                next_candle["close"] < next_candle["open"]
-                and next_range >= displacement_multiplier * ob_range
-            )
-
-        if not displacement_valid:
-            continue
-
-        # No-break check (OB should not be broken, not just touched)
-        future_df = df.iloc[i + 2 :]
-        if not future_df.empty:
-            # For bullish OB: broken if future low < OB low
-            # For bearish OB: broken if future high > OB high
-            if is_bullish:
-                broken = (future_df["low"] < ob_low).any()
-            else:
-                broken = (future_df["high"] > ob_high).any()
-            
-            if broken:
-                continue
-
-        valid_obs.append({
-            "ob_index": i,
-            "ob_time": idxs[i],
-            "ob_high": float(ob_high),
-            "ob_low": float(ob_low),
-        })
-
-    # ======================================================
-    # 2️⃣ NO OB CASE
-    # ======================================================
-    if not valid_obs:
-        print("\n❌ No 5M OB found → No trade\n")
-        return None,None
-
-    # ======================================================
-    # 3️⃣ PRINT ALL FOUND OBs
-    # ======================================================
-    print("\n====== 5M ORDER BLOCKS ======")
-    for idx, ob in enumerate(valid_obs, 1):
-        print(
-            f"{idx}. Time: {ob['ob_time']} | "
-            f"High: {ob['ob_high']} | Low: {ob['ob_low']}"
-        )
-    print("=============================\n")
-
-    # ======================================================
-    # 4️⃣ SELECT EXECUTION OB
-    # ======================================================
-    if is_bullish:
-        exec_ob = max(valid_obs, key=lambda x: x["ob_high"])
+    if htf_trend == "bullish":
+        choch_trend = "bearish"
     else:
-        exec_ob = min(valid_obs, key=lambda x: x["ob_low"])
-
+        choch_trend = "bullish"
     # ======================================================
-    # 5️⃣ TRADE PLANNING
+    # TRADE PLANNING FROM 50% LEVEL (CHOCH BASED)
     # ======================================================
-    first_candle = df.iloc[0]
 
-    if is_bullish:
-        stop_loss = exec_ob["ob_low"] - 4 * pip_value
-        entry = exec_ob["ob_high"]
+    if choch_trend == "bullish":
+        # Bullish CHOCH → BUY
+        entry = mid_price
+        stop_loss = leg_low - 4 * pip_value
         risk = entry - stop_loss
         take_profit = entry + 3 * risk
         direction = "BUY"
+
     else:
-        stop_loss = exec_ob["ob_high"] + 4 * pip_value
-        entry = exec_ob["ob_low"]
+        # Bearish CHOCH → SELL
+        entry = mid_price
+        stop_loss = leg_high + 4 * pip_value
         risk = stop_loss - entry
         take_profit = entry - 3 * risk
         direction = "SELL"
 
     if risk <= 0:
         print(
-                f"[RISK DEBUG] entry={entry}, sl={stop_loss}, risk={risk}"
-            )
+            f"[RISK DEBUG] entry={entry}, sl={stop_loss}, risk={risk}"
+        )
         print("❌ Invalid risk → Trade skipped\n")
-        return None, None   
-        
-
+        return None, None
+    # ======================================================
+    # 3️⃣ FINAL TRADE OBJECT (LEG 50% BASED)
+    # ======================================================
     trade = {
         "direction": direction,
         "entry": float(entry),
         "sl": float(stop_loss),
         "tp": float(take_profit),
         "rr": 3.0,
-        "ob_time": exec_ob["ob_time"],
-        "ob_high": exec_ob["ob_high"],
-        "ob_low": exec_ob["ob_low"],
+        "htf_trend": htf_trend,
+        "choch_trend": choch_trend,
+        "leg_high": float(leg_high),
+        "leg_low": float(leg_low),
+        "mid_price": float(mid_price),
+        "leg_start": leg_start_time,
+        "leg_end": leg_end_time,
     }
 
     # ======================================================
-    # 6️⃣ PRINT FINAL TRADE
+    # 4️⃣ PRINT FINAL TRADE
     # ======================================================
-    print("====== FINAL TRADE PLAN ======")
+    print("====== FINAL TRADE PLAN (50% CHOCH LEG) ======")
+    print(f"HTF Trend   : {trade['htf_trend'].upper()}")
+    print(f"CHOCH Trend : {trade['choch_trend'].upper()}")
+    print(f"Leg Start   : {trade['leg_start']}")
+    print(f"Leg End     : {trade['leg_end']}")
+    print(f"Leg High    : {trade['leg_high']}")
+    print(f"Leg Low     : {trade['leg_low']}")
+    print(f"Mid (50%)   : {trade['mid_price']}")
     print(f"Direction   : {trade['direction']}")
-    print(f"OB Time     : {trade['ob_time']}")
-    print(f"OB High     : {trade['ob_high']}")
-    print(f"OB Low      : {trade['ob_low']}")
     print(f"Entry       : {trade['entry']}")
     print(f"Stop Loss  : {trade['sl']}")
     print(f"Take Profit: {trade['tp']}")
     print(f"Risk-Reward: 1:{trade['rr']}")
-    print("==============================\n")
+    print("=============================================\n")
 
-    return trade, valid_obs
+    return trade, None

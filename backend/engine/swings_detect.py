@@ -540,6 +540,8 @@ def market_structure_mapping(
     active_poi = None
     poi_tapped = False
     protected_5m_point = None
+    protected_5m_time = None
+
     opp_pullback_count = 0
     choch_validated = False
     entry_filled = False
@@ -559,12 +561,8 @@ def market_structure_mapping(
                 # Check entry fill FIRST (before TP/SL)
                 entry_filled_this_candle = False
                 
-                if trend == "BULLISH":
-                    if c5.low <= trade_details["entry"] <= c5.high:
-                        entry_filled_this_candle = True
-                else:
-                    if c5.low <= trade_details["entry"] <= c5.high:
-                        entry_filled_this_candle = True
+                if c5.low <= trade_details["entry"] <= c5.high:
+                    entry_filled_this_candle = True
 
                 if entry_filled_this_candle:
                     entry_filled = True
@@ -574,47 +572,68 @@ def market_structure_mapping(
                     
                     # Continue to check TP/SL in same iteration
                 else:
-                    # Entry not filled - check if TP hit without entry
-                    if trend == "BULLISH":
-                        if c5.high >= trade_details["tp"]:
-                            print(f"{indent}🟩 TP HIT WITHOUT ENTRY → TRADE INVALID")
-                            
+                    # --------------------------------------------------
+                    # Entry NOT filled — check partial TP move (2% rule)
+                    # --------------------------------------------------
+                    entry = trade_details["entry"]
+                    tp = trade_details["tp"]
+
+                    if trade_details["direction"] == "BUY":
+                        tp_2pct_level = entry + 0.02 * (tp - entry)
+
+                        if c5.high >= tp_2pct_level:
+                            print(
+                                f"{indent}🟩 TP WITHOUT ENTRY (2% LEVEL HIT @ {tp_2pct_level}) → TRADE INVALID"
+                            )
+
                             # 🔥 RESET EVERYTHING
                             trade_active = False
                             trade_details = None
                             entry_filled = False
                             poi_active = False
                             protected_5m_point = None
+                            protected_5m_time = None
+
                             opp_pullback_count = 0
                             choch_validated = False
                             continue
-                    else:
-                        if c5.low <= trade_details["tp"]:
-                            print(f"{indent}🟩 TP HIT WITHOUT ENTRY → TRADE INVALID")
-                            
+
+                    else:  # SELL
+                        tp_2pct_level = entry - 0.02 * (entry - tp)
+
+                        if c5.low <= tp_2pct_level:
+                            print(
+                                f"{indent}🟩 TP WITHOUT ENTRY (2% LEVEL HIT @ {tp_2pct_level}) → TRADE INVALID"
+                            )
+
                             # 🔥 RESET EVERYTHING
                             trade_active = False
                             trade_details = None
                             entry_filled = False
                             poi_active = False
                             protected_5m_point = None
+                            protected_5m_time = None
+
                             opp_pullback_count = 0
                             choch_validated = False
                             continue
+
                     continue
 
             if entry_filled:
 
-                if trend == "BULLISH":
+                if trade_details["direction"] == "BUY":
 
                     if c5.low <= trade_details["sl"]:
                         print(f"{indent}🟥 SL HIT")
-                        
+
                         trade_active = False
                         trade_details = None
                         entry_filled = False
                         poi_active = False
                         protected_5m_point = None
+                        protected_5m_time = None
+
                         opp_pullback_count = 0
                         choch_validated = False
                         continue
@@ -622,28 +641,30 @@ def market_structure_mapping(
                     # TAKE PROFIT
                     elif c5.high >= trade_details["tp"]:
                         print(f"{indent}🟩 TP HIT")
-                        
 
                         trade_active = False
                         trade_details = None
                         entry_filled = False
                         poi_active = False
                         protected_5m_point = None
+                        protected_5m_time = None
+
                         opp_pullback_count = 0
                         choch_validated = False
                         continue
 
-                else:  
+                else:  # SELL
 
                     if c5.high >= trade_details["sl"]:
                         print(f"{indent}🟥 SL HIT")
-                        # 🔥 SL HIT — LOG HERE
-                        
+
                         trade_active = False
                         trade_details = None
                         entry_filled = False
                         poi_active = False
                         protected_5m_point = None
+                        protected_5m_time = None
+
                         opp_pullback_count = 0
                         choch_validated = False
                         continue
@@ -651,18 +672,20 @@ def market_structure_mapping(
                     # TAKE PROFIT
                     elif c5.low <= trade_details["tp"]:
                         print(f"{indent}🟩 TP HIT")
-                        
 
                         trade_active = False
                         trade_details = None
                         entry_filled = False
                         poi_active = False
                         protected_5m_point = None
+                        protected_5m_time = None
+
                         opp_pullback_count = 0
                         choch_validated = False
                         continue
 
                 continue
+
         # --------------------------------------------------
         # 1️⃣ STRUCTURE INVALIDATION (CHOCH) — ONLY AFTER POI
         # --------------------------------------------------
@@ -720,7 +743,6 @@ def market_structure_mapping(
                     # ✅ MULTIPLE protected 5M points supported
                     "protected_5m_points": list(protected_5m_points),
                     "choch_bos_events": list(leg_5m_structure),
-                    "five_m_obs": list(all_5m_obs),              
                     "planned_trade": list(all_5m_trades)        
                 })
 
@@ -787,7 +809,6 @@ def market_structure_mapping(
                     # ✅ MULTIPLE protected 5M points supported
                     "protected_5m_points": list(protected_5m_points),
                     "choch_bos_events": list(leg_5m_structure),
-                    "five_m_obs": list(all_5m_obs),              
                     "planned_trade": list(all_5m_trades)          
                 })
 
@@ -874,7 +895,6 @@ def market_structure_mapping(
                     # ✅ MULTIPLE protected 5M points supported
                     "protected_5m_points": list(protected_5m_points),
                     "choch_bos_events": list(leg_5m_structure) ,
-                    "five_m_obs": list(all_5m_obs),              
                     "planned_trade": list(all_5m_trades)         
                 })
 
@@ -965,7 +985,6 @@ def market_structure_mapping(
                     # ✅ MULTIPLE protected 5M points supported
                     "protected_5m_points": list(protected_5m_points),
                     "choch_bos_events": list(leg_5m_structure),
-                    "five_m_obs": list(all_5m_obs),              
                     "planned_trade": list(all_5m_trades)        
                 })
                 # 2️⃣ Persist the leg
@@ -1047,15 +1066,29 @@ def market_structure_mapping(
                     trend=opp_trend,
                 )
                 protected_5m_time = t5
+                print(
+                    f"[DEBUG SET] from process_structure | "
+                    f"protected_5m_point={protected_5m_point}, "
+                    f"protected_5m_time={protected_5m_time}"
+                )
                 # Check if return value is valid (not None and not 0.0 or negative)
                 if protected_5m_point is None or protected_5m_point <= 0:
                     print(f"{indent}❌ Invalid 5M structure point: {protected_5m_point}")
                     poi_active = False
                     protected_5m_point = None
+                    protected_5m_time = None
+
                     continue
                 print(f"{indent}✅ 5M Protected Point: {protected_5m_point}")
                 # whenever you detect a protected 5M point:
                 if protected_5m_point is not None:
+                    print(
+                        f"[DEBUG ENTER 5M STRUCTURE] "
+                        f"t5={t5} | trend={trend} | "
+                        f"protected_5m_point={protected_5m_point} | "
+                        f"protected_5m_time={protected_5m_time}"
+                    )
+
                     protected_5m_points.append({
                         "t": t5,
                         "trend": trend.upper(),
@@ -1068,8 +1101,12 @@ def market_structure_mapping(
                 else:
                     print(f"{indent}❌ Invalid 5M structure point: {protected_5m_point}")
                     poi_active = False
+
                     protected_5m_point = None
+                    protected_5m_time = None
+
                     continue
+
         # --------------------------------------------------
         # POI INVALIDATION (TYPE + ORDER AWARE)
         # --------------------------------------------------
@@ -1133,6 +1170,8 @@ def market_structure_mapping(
                             active_poi = None
                             poi_tapped = False
                             protected_5m_point = None
+                            protected_5m_time = None
+
                             continue
 
                 # =========================
@@ -1174,6 +1213,8 @@ def market_structure_mapping(
                             active_poi = None
                             poi_tapped = False
                             protected_5m_point = None
+                            protected_5m_time = None
+
                             continue
 
                 
@@ -1192,8 +1233,15 @@ def market_structure_mapping(
                         active_poi["state"] = "INVALIDATED"
                         active_poi = None
                         poi_tapped = False
+                    print(
+                        f"[DEBUG RESET @ CHOCH BULLISH] "
+                        f"t5={t5} | "
+                        f"protected_5m_time was {protected_5m_time}"
+                    )
+
                         
                     protected_5m_point = None
+
                     swing_low_5m = None
                     swing_high_5m = None
                     swing_low_range_start = None
@@ -1231,6 +1279,12 @@ def market_structure_mapping(
                 if (
                     opp_pullback_count == 2 and swing_low_5m is None
                 ):
+                    print(
+                        f"[DEBUG USE protected_5m_time → swing_low] "
+                        f"t5={t5} | "
+                        f"protected_5m_time={protected_5m_time}"
+                    )
+
                     # calculate swing low between protected swing high and pullback candle
                     swing_low_range_start = protected_5m_time
 
@@ -1254,12 +1308,18 @@ def market_structure_mapping(
                     # ------------------------------------------
                     # 5️⃣ UPDATE protected swing HIGH
                     # ------------------------------------------
-                    new_protected_high = df_5m.loc[
+                    swing_high_series = df_5m.loc[
                         swing_low_range_start:bos_time, "high"
-                    ].max()
+                    ]
 
-                    protected_5m_point = new_protected_high
-                    protected_5m_time = bos_time
+                    protected_5m_point = swing_high_series.max()
+                    protected_5m_time = swing_high_series.idxmax()
+                    print(
+                        f"[DEBUG SET protected HIGH] "
+                        f"time={protected_5m_time} | "
+                        f"price={protected_5m_point}"
+                    )
+
                     print("new protected 5m point (swing high):", protected_5m_point)
                     protected_5m_points.append({
                         "t": t5,
@@ -1289,8 +1349,15 @@ def market_structure_mapping(
                         active_poi["state"] = "INVALIDATED"
                         active_poi = None
                         poi_tapped = False
+                    print(
+                        f"[DEBUG RESET @ CHOCH BEARISH] "
+                        f"t5={t5} | "
+                        f"protected_5m_time was {protected_5m_time}"
+                    )
 
                     protected_5m_point = None
+                    protected_5m_time = None
+
                     swing_low_5m = None
                     swing_high_5m = None
                     swing_low_range_start = None
@@ -1328,6 +1395,11 @@ def market_structure_mapping(
                 if (
                     opp_pullback_count == 2 and swing_high_5m is None
                 ):
+                    print(
+                        f"[DEBUG USE protected_5m_time → swing_high] "
+                        f"t5={t5} | "
+                        f"protected_5m_time={protected_5m_time}"
+                    )
                     # find candle where protected swing LOW was formed
                     swing_high_range_start = protected_5m_time
 
@@ -1353,12 +1425,18 @@ def market_structure_mapping(
                     # ------------------------------------------
                     # 5️⃣ UPDATE protected swing LOW
                     # ------------------------------------------
-                    new_protected_low = df_5m.loc[
+                    swing_low_series = df_5m.loc[
                         swing_high_range_start:bos_time, "low"
-                    ].min()
+                    ]
 
-                    protected_5m_point = new_protected_low
-                    protected_5m_time = bos_time   # 🔴 REQUIRED
+                    protected_5m_point = swing_low_series.min()
+                    protected_5m_time = swing_low_series.idxmin()
+                    print(
+                        f"[DEBUG SET protected LOW] "
+                        f"time={protected_5m_time} | "
+                        f"price={protected_5m_point}"
+                    )
+
 
                     print("new protected 5m point (swing low):", protected_5m_point)
                     protected_5m_points.append({
@@ -1421,26 +1499,31 @@ def market_structure_mapping(
             print(trade)
 
             if trade:
-                # ✅ Store all OBs and trade info globally
-                all_5m_obs.append({
-                    "choch_leg_start": choch_leg_start,
-                    "choch_leg_end": t5,
-                    "trend": trend,
-                    "ob_time": trade["ob_time"],
-                    "ob_high": trade["ob_high"],
-                    "ob_low": trade["ob_low"]
-                })
+                # ======================================================
+                # STORE 5M CHOCH TRADE (50% LEG BASED) — FOR PLOTTING
+                # ======================================================
                 all_5m_trades.append({
-                    "choch_leg_start": choch_leg_start,
-                    "choch_leg_end": t5,
-                    "trend": trend,
+                    # ---- CHOCH leg timing ----
+                    "choch_leg_start": trade["leg_start"],
+                    "choch_leg_end": trade["leg_end"],
+
+                    # ---- Trend context ----
+                    "htf_trend": trade["htf_trend"],
+                    "choch_trend": trade["choch_trend"],
+
+                    # ---- Leg structure ----
+                    "leg_high": trade["leg_high"],
+                    "leg_low": trade["leg_low"],
+
+                    # ---- 50% equilibrium ----
+                    "mid_price": trade["mid_price"],
+
+                    # ---- Trade levels ----
                     "entry": trade["entry"],
                     "sl": trade["sl"],
                     "tp": trade["tp"],
                     "direction": trade["direction"],
-                    "ob_time": trade["ob_time"],
-                    "ob_high": trade["ob_high"],
-                    "ob_low": trade["ob_low"]
+                    "rr": trade["rr"],
                 })
 
                 # -------------------------------
@@ -1461,23 +1544,26 @@ def market_structure_mapping(
                     continue
 
                 # -------------------------------
-                # STORE TRADE (DO NOT RETURN)
+                # STORE TRADE (EXECUTION STATE)
                 # -------------------------------
                 trade_details = {
                     "entry": trade["entry"],
                     "sl": trade["sl"],
                     "tp": trade["tp"],
-                    "direction": trend,
-                    "choch_time": t5,
+                    "direction": trade["direction"],     # ✅ TRADE direction, not HTF
+                    "choch_time": trade["leg_end"],       # end of CHOCH leg
                     "status": "PENDING",
+                    "rr": trade["rr"],
+
+                    # Optional but useful
+                    "htf_trend": trade["htf_trend"],
+                    "choch_trend": trade["choch_trend"],
                 }
 
                 trade_active = True
+
                 print(f"{indent}✅ TRADE STORED → WAITING FOR SL / TP")
                 # 🔥 TRADE ENTRY → 1:3 R:R LINES!
-                rr_ratio = abs((trade_details["tp"] - trade_details["entry"]) / (trade_details["entry"] - trade_details["sl"]))
-                # 🔥 TRADE ENTRY — LOG HERE
-                
 
             else:
                 print(f"{indent}❌ Trade logic rejected")
