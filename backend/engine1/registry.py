@@ -1,12 +1,10 @@
-from typing import Dict
-from engine1.state import PairState
+from state import PairState
 
-
-class PairRegistry:
+class StateRegistry:
     def __init__(self):
-        self.states: Dict[str, PairState] = {}
+        self._states = {}
 
-    def get(self, symbol: str) -> PairState:
-        if symbol not in self.states:
-            self.states[symbol] = PairState()
-        return self.states[symbol]
+    def get_state(self, symbol: str) -> PairState:
+        if symbol not in self._states:
+            self._states[symbol] = PairState(symbol=symbol)
+        return self._states[symbol]

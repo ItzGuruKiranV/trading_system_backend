@@ -1,64 +1,90 @@
-import pandas as pd
-from engine1.state import PairState
-from engine.swings_detect import market_structure_mapping
-
+from candle_stream import Candle
+from state import PairState
 
 class PairEngine:
-    def __init__(self, symbol: str, state: PairState):
-        self.symbol = symbol
+    def __init__(self, state: PairState):
         self.state = state
+        self._buffer_4h = []
 
-        self.df_4h = pd.DataFrame(columns=["open","high","low","close"])
-        self.df_5m = pd.DataFrame(columns=["open","high","low","close"])
+    def on_candle(self, candle: Candle):
+        # Build 4H candle from 1M
+        self._buffer_4h.append(candle)
 
-        self.last_processed_4h = None
+        if len(self._buffer_4h) == 240:
+            self.process_4h_candle(self._buffer_4h)
+            self._buffer_4h.clear()
 
-        # capture events
-        self._events = []
+    def process_4h_candle(self, candles_4h):
+        s = self.state
 
-    # --------------------------------------------------
-    # EVENT HOOK (THIS IS THE KEY)
-    # --------------------------------------------------
-    def log_event_master(self, **kwargs):
-        self._events.append(kwargs)
+        high = max(c.high for c in candles_4h)
+        low = min(c.low for c in candles_4h)
+        close = candles_4h[-1].close
+        time = candles_4h[-1].time
 
-    # --------------------------------------------------
-    def on_new_4h_candle(self, time, o, h, l, c):
-        self.df_4h.loc[time] = [o, h, l, c]
+        # INITIAL SEED
+        if s.last_swing_high is None:
+            s.last_swing_high = high
+            s.last_swing_low = low
+            return
 
-        # call YOUR logic
-        self.run_structure()
+        # BOS LOGIC
+        if s.trend_4h != "BULLISH" and close > s.last_swing_high:
+            s.trend_4h = "BULLISH"
+            s.bos_time_4h = time
+            s.protected_low = s.last_swing_low
+            s.phase = "PULLBACK"
+            self.emit("BOS_4H", time)
 
-        # process captured events
-        self.flush_events()
+        elif s.trend_4h != "BEARISH" and close < s.last_swing_low:
+            s.trend_4h = "BEARISH"
+            s.bos_time_4h = time
+            s.protected_high = s.last_swing_high
+            s.phase = "PULLBACK"
+            self.emit("BOS_4H", time)
 
-    # --------------------------------------------------
-    def run_structure(self):
-        self._events.clear()
+        # UPDATE SWINGS
+        s.last_swing_high = max(s.last_swing_high, high)
+        s.last_swing_low = min(s.last_swing_low, low)
 
-        market_structure_mapping(
-            df_4h=self.df_4h.copy(),
-            df_5m=self.df_5m.copy(),
-            trend=self.state.trend or "BULLISH",
-            bos_time=self.state.bos_time,
-        )
+        # PULLBACK CHECK
+        if s.phase == "PULLBACK":
+            self.check_pullback(high, low, close, time)
 
-    # --------------------------------------------------
-    def flush_events(self):
-        for e in self._events:
-            event = e.get("event")
+    def check_pullback(self, high, low, close, time):
+        s = self.state
 
-            if event == "bos_4h":
-                self.state.trend = e["trend"]
-                self.state.bos_price = e.get("swing_high") or e.get("swing_low")
-                self.state.bos_time = e["time"]
+        if s.trend_4h == "BULLISH":
+            if s.candidate_high is None or high > s.candidate_high:
+                s.candidate_high = high
+                s.bearish_count = 0
+                return
 
-            elif event == "choch_4h":
-                self.state.trend = e["trend"]
-                self.state.choch_price = e.get("swing_low") or e.get("swing_high")
-                self.state.choch_time = e["time"]
+            if close < s.candidate_high:
+                s.bearish_count += 1
 
-            elif event == "pullback_confirmed":
-                self.state.pullback_price = e.get("swing_low") or e.get("swing_high")
-                self.state.pullback_time = e["time"]
-                self.state.pullback_candle_count = e.get("candle_count", 0)
+            if s.bearish_count >= 3:
+                s.pullback_confirmed = True
+                s.phase = "READY"
+                self.emit("PULLBACK_CONFIRMED", time)
+
+        if s.trend_4h == "BEARISH":
+            if s.candidate_low is None or low < s.candidate_low:
+                s.candidate_low = low
+                s.bullish_count = 0
+                return
+
+            if close > s.candidate_low:
+                s.bullish_count += 1
+
+            if s.bullish_count >= 3:
+                s.pullback_confirmed = True
+                s.phase = "READY"
+                self.emit("PULLBACK_CONFIRMED", time)
+
+    def emit(self, event, time):
+        self.state.events.append({
+            "symbol": self.state.symbol,
+            "event": event,
+            "time": time
+        })
