@@ -14,15 +14,63 @@ DUMMY_MARKET_EVENTS =[
     "events": [
       {
         "id": "5m_RETR_20221130_1700",
+        "type": "TRADE_PLAN",
+        "plan_direction": "SHORT",
+        "SL": 1.04188,
+        "TP": 1.04029,
+        "Entry": 1.041085,
+        "time_start": "2022-11-30T17:00:00",
+        "time_end": "2022-11-30T17:25:00"
+      }
+    ]
+  },
+    {
+    "symbol": "EURUSD",
+    "timeframe": "5m",
+    "events": [
+      {
+        "id": "5m_RETR_20221130_1700",
         "type": "RETRACEMENT",
-        "high": 1.04188,
-        "low": 1.04029,
+        "end": 1.04188,
+        "start": 1.04029,
         "mid": 1.041085,
         "time_start": "2022-11-30T17:00:00",
         "time_end": "2022-11-30T17:25:00",
         "extend_candles": 5
       }
     ]
+  },
+  {
+    "symbol": "EURUSD",
+    "timeframe": "4h",
+    "events": [
+      {
+        "id": "4H_POI_OB_20221214_1200",
+        "type": "POI-OB",
+        "time_start": "2022-12-14T12:00:00",
+        "time_end": "2022-12-14T16:00:00",
+        "low": 1.06206,
+        "high": 1.06950
+      }
+    ]
+  },
+  {
+  "symbol": "EURUSD",
+  "timeframe": "4H",
+  "events": [
+      {
+        "id": "4H_BOS_20221205_0400",
+        "type": "BOS",
+        "broken_level": 1.05680,
+        "time": "2022-12-05T04:00:00"
+      },
+      {
+        "id": "4H_CHOCH_20221206_0400",
+        "type": "CHOCH",
+        "broken_level": 1.05800,
+        "time": "2022-12-06T04:00:00"
+      }
+   ]
   },
   {
     "symbol": "EURUSD",
@@ -49,43 +97,6 @@ DUMMY_MARKET_EVENTS =[
       },
       {
         "id": "5m_CHOCH_20221206_0400",
-        "type": "CHOCH",
-        "broken_level": 1.05800,
-        "time": "2022-12-06T04:00:00"
-      }
-    ]
-  },
-
-
-  {
-    "symbol": "EURUSD",
-    "timeframe": "4h",
-    "events": [
-      {
-        "id": "4H_POI_OB_20221214_1200",
-        "type": "POI-OB",
-        "trend": "BULLISH",
-        "time_start": "2022-12-14T12:00:00",
-        "time_end": "2022-12-14T16:00:00",
-        "low": 1.06206,
-        "high": 1.06950
-      }
-    ]
-  },
-
-  {
-    "symbol": "EURUSD",
-    "timeframe": "4H",
-    "events": [
-      {
-        "id": "4H_BOS_20221205_0400",
-        "type": "BOS",
-        "direction": "BULLISH",
-        "broken_level": 1.05680,
-        "time": "2022-12-05T04:00:00"
-      },
-      {
-        "id": "4H_CHOCH_20221206_0400",
         "type": "CHOCH",
         "broken_level": 1.05800,
         "time": "2022-12-06T04:00:00"
