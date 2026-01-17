@@ -47,10 +47,10 @@ state.min_pullback_candles = 2
 
 state.trend_4h = "BULLISH"
 
-state.swing_low = 1.0820        # last confirmed HL
+state.swing_low = 1.07661       # last confirmed HL
 state.swing_high = None          # NOT known yet
-state.bos_level_4h = 1.0945      # price level that caused BOS
-state.bos_time_4h = datetime(2023, 3, 10, 8, 0)
+# state.bos_level_4h = 1.0945      # price level that caused BOS
+state.bos_time_4h = datetime(2023, 1, 18, 4, 0)
 
 # Runtime trackers
 state.candidate_high = None
@@ -195,6 +195,7 @@ def main():
                                 if state.bearish_count >= state.min_pullback_candles or depth_ratio >= state.pullback_pct:
                                     state.pullback_confirmed = True
                                     state.pullback_time = candle_4h["time"]
+                                    print(f"🌊 4H PULLBACK CONFIRMED (BULLISH) @ {state.pullback_time} | Depth: {depth_ratio:.2f}")
                                     state.h4_structure_event=None
                                     state.swing_high = state.candidate_high
                                     state.candidate_high = None
@@ -206,6 +207,7 @@ def main():
                                         ohlc_df=swing_df,
                                         trend=state.trend_4h
                                     )
+                                    print(f"🔍 DETECTED {len(state.active_pois)} POIs in swing leg")
                                     # Deduplicate POIs
                                     seen = set()
                                     unique_pois = []
@@ -226,6 +228,10 @@ def main():
                                             else:
                                                 break
                                         if nearest_candle is None:
+                                            # If buffer is empty or no match, handle gracefully
+                                            if not buffer_5m_poi:
+                                                print("⚠️ Warning: buffer_5m_poi is empty! Skipping POI mapping.")
+                                                continue
                                             nearest_candle = buffer_5m_poi[0]
 
                                         start_time = nearest_candle["time"]
@@ -322,6 +328,7 @@ def main():
                                 if state.bullish_count >= state.min_pullback_candles or depth_ratio >= state.pullback_pct:
                                     state.pullback_confirmed = True
                                     state.pullback_time = candle_4h["time"]
+                                    print(f"🌊 4H PULLBACK CONFIRMED (BEARISH) @ {state.pullback_time} | Depth: {depth_ratio:.2f}")
                                     state.h4_structure_event=None
                                     state.swing_low = state.candidate_low
                                     state.bullish_count = 0
@@ -332,6 +339,7 @@ def main():
                                         ohlc_df=swing_df,
                                         trend=state.trend_4h
                                     )
+                                    print(f"🔍 DETECTED {len(state.active_pois)} POIs in swing leg")
 
                                     # Deduplicate POIs
                                     seen = set()
@@ -353,6 +361,9 @@ def main():
                                             else:
                                                 break
                                         if nearest_candle is None:
+                                            if not buffer_5m_poi:
+                                                print("⚠️ Warning: buffer_5m_poi is empty! Skipping POI mapping.")
+                                                continue
                                             nearest_candle = buffer_5m_poi[0]
 
                                         start_time = nearest_candle["time"]
@@ -446,7 +457,7 @@ def main():
                     bear_candle_5m = candle_5m["close"] < candle_5m["open"]
                     
                     if state.trend_4h == "BULLISH":
-                        state.trend_5m = "BEARISH"
+                            state.trend_5m = "BEARISH"
 
                         if state.candidate_low_5m is None:
                             state.candidate_low_5m = candle_5m["low"]
@@ -489,6 +500,7 @@ def main():
                                 state.pullback_count_5m=0
                                 state.candidate_high_5m= candle_5m["high"]
                                 choch_5m_this_candle = True
+                                print(f"🚀 5M BULLISH CHOCH @ {candle_5m['time']} | Broken High: {state.swing_high_5m}")
                                 state.buffer_5m_sh.clear()
                         # --------------------------------------------------
                         # 5M POI TAP CHECK (Realtime)
@@ -507,6 +519,7 @@ def main():
                                         if candle_5m["low"] <= poi["price_high"] and candle_5m["high"] >= poi["price_low"]:
                                             state.poi_tapped = True
                                             state.active_poi=poi
+                                            print(f"🎯 POI TAPPED (OB) @ {candle_5m['time']} | Level: {poi['price_low']}-{poi['price_high']}")
                                             state.poi_tapped_level=candle_5m["low"]
                                             state.poi_tapped_time=candle_5m["time"]
                                             
@@ -516,6 +529,7 @@ def main():
                                         if candle_5m["low"] <= poi["price"]:
                                             state.poi_tapped = True
                                             state.active_poi=poi
+                                            print(f"🎯 POI TAPPED (LIQ) @ {candle_5m['time']} | Level: {poi['price']}")
                                             state.poi_tapped_level=candle_5m["low"]
                                             state.poi_tapped_time=candle_5m["time"]
                                             
@@ -781,7 +795,7 @@ def main():
 
 
                     elif state.trend_4h == "BEARISH":
-                        state.trend_5m = "BULLISH"
+                            state.trend_5m = "BULLISH"
 
                         if state.candidate_high_5m is None:
                             state.candidate_high_5m = candle_5m["high"]

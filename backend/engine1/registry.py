@@ -1,4 +1,4 @@
-from state import PairState
+from .state import PairState
 
 class StateRegistry:
     def __init__(self):

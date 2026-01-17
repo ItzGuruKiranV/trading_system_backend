@@ -15,7 +15,7 @@ class PairState:
     choch_level_4h: Optional[float] = None 
     bos_level_4h: Optional[float] = None  # BOS candle level (price)
     bos_time_4h: Optional[datetime] = None
-    h4_structure_event = Optional[Literal["BOS", "CHOCH"]] = None
+    h4_structure_event: Optional[Literal["BOS", "CHOCH"]] = None
 
     # Pullback tracking
     phase: str = "WAITING"     # WAITING → PULLBACK → READY
