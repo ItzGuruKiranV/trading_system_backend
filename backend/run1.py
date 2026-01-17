@@ -148,8 +148,6 @@ def main():
                     close=float(c)
                 )
                 bucket_5m.append(candle_1m)
-                if t.minute % 5 == 1:
-                    print(f"📥 Received 1M Candle @ {t}")
 
                 # -----------------------------
                 # 1. Build 5M candle incrementally
@@ -163,7 +161,6 @@ def main():
                         "low": min(c.low for c in bucket_5m),
                         "close": bucket_5m[-1].close,
                     }
-                    print(f"--- 5M GATE CHECK @ {candle_5m['time']} | PB: {state.pullback_confirmed} | H4_EV: {state.h4_structure_event}")
                     if event_loop is not None:
                         asyncio.run_coroutine_threadsafe(
                             ws_manager.send({
@@ -410,7 +407,7 @@ def main():
                                 leg_buffer_4h.clear()
 
                         if state.pullback_confirmed:
-                            if state.trend_4h == "BULLISH" and state.swing_high is not None and candle_4h["close"] > state.swing_high:
+                            if state.trend_4h == "BULLISH" and candle_4h["close"] > state.swing_high:
                                 print(f"🟦 BOS WITHOUT POI @ {candle_4h['time']} in 4H")
                                 state.bos_level_4h = candle_4h["close"]
                                 state.bos_time_4h= candle_4h["time"]
@@ -625,7 +622,7 @@ def main():
                                 leg_buffer_4h.clear()
 
                         if state.pullback_confirmed:
-                            if state.trend_4h == "BEARISH" and state.swing_low is not None and candle_4h["close"] < state.swing_low:
+                            if state.trend_4h == "BEARISH" and candle_4h["close"] < state.swing_low:
                                 print(f"🟦 BOS WITHOUT POI @ {candle_4h['time']} in 4H")
                                 state.bos_level_4h = candle_4h["close"]
                                 state.bos_time_4h = candle_4h["time"]
@@ -669,8 +666,12 @@ def main():
                 # ❌ Gate 1: Ignore all 5M candles until 4H pullback is confirmed
                 if not state.pullback_confirmed:
                     continue
-                
-                print(f"🕯️ Processing 5M Candle @ {candle_5m['time']} | Trend 4H: {state.trend_4h}")
+                    # ❌ Gate 2: Ignore 5M candles before pullback time
+                    elif state.pullback_time and candle_5m["time"] < state.pullback_time:
+                        continue
+                    # ❌ Gate 3: Stop 5M processing immediately on 4H BOS / CHOCH
+                    elif state.h4_structure_event in ("BOS", "CHOCH"):
+                        continue   
                 bull_candle_5m = candle_5m["close"] > candle_5m["open"]
                 bear_candle_5m = candle_5m["close"] < candle_5m["open"]
                 if state.trend_4h == "BULLISH":
