@@ -3,6 +3,15 @@ from pathlib import Path
 import csv
 import pandas as pd
 
+import asyncio
+from ws.manager import ws_manager
+
+from backend.engine1.registry import StateRegistry
+from backend.engine.poi_detection import detect_pois_from_swing 
+
+global event_loop
+
+event_loop = None
 # ==================================================
 # SIMPLE CANDLE OBJECT
 # ==================================================
@@ -14,11 +23,13 @@ class Candle:
         self.low = low
         self.close = close
 
+MAX_CANDLES_PER_SECOND = 1
+MIN_INTERVAL = 1 / MAX_CANDLES_PER_SECOND 
 # ==================================================
 # CONFIG
 # ==================================================
 MINUTE_CSV_PATH = Path(
-    r"D:\Trading Project\trading_system_backend\HISTDATA_COM_MT_EURUSD_M12023\DAT_MT_EURUSD_M1_2023.csv"
+    r"C:\Gurukiran\projects\trading_system\trading_system_backend\HISTDATA_COM_MT_EURUSD_M12022\DAT_MT_EURUSD_M1_2022.csv"
 )
 
 # Buffers
@@ -29,8 +40,7 @@ leg_buffer_4h = []     # Holds 4H candles from BOS → pullback
 # ==================================================
 # STATE REGISTRY SETUP
 # ==================================================
-from engine1.registry import StateRegistry
-from engine.poi_detection import detect_pois_from_swing 
+
 
 registry = StateRegistry()
 SYMBOL = "EURUSD"  # Example symbol for now (single pair)
@@ -109,6 +119,11 @@ def reset_on_4h_structure(state):
 # MAIN
 # ==================================================
 def main():
+    # wait until FastAPI sets event_loop
+    import time
+    while event_loop is None:
+        time.sleep(0.05)
+
     print("=" * 60)
     print("Trading Agent - REALTIME MODE (CSV STREAM)")
     print("=" * 60)
@@ -121,7 +136,7 @@ def main():
                 continue
 
             date_str, time_str, o, h, l, c = row[:6]
-
+            time.sleep(MIN_INTERVAL)
             try:
                 t = datetime.strptime(date_str + " " + time_str, "%Y.%m.%d %H:%M")
                 candle_1m = Candle(
@@ -131,12 +146,12 @@ def main():
                     low=float(l),
                     close=float(c)
                 )
+                bucket_5m.append(candle_1m)
 
                 # -----------------------------
                 # 1. Build 5M candle incrementally
                 # -----------------------------
-                bucket_5m.append(candle_1m)
-
+                # ---------------- 5M CANDLE ----------------
                 if len(bucket_5m) == 5:
                     candle_5m = {
                         "time": bucket_5m[0].time,
@@ -145,17 +160,55 @@ def main():
                         "low": min(c.low for c in bucket_5m),
                         "close": bucket_5m[-1].close,
                     }
-                    choch_5m_this_candle = False
-                    buffer_5m.append(candle_5m)
-                    # -----------------------------
-                    # NEW: Append to POI mapping buffer only if leg started and pullback not confirmed
-                    # -----------------------------
-                    leg_started = state.swing_low is not None or state.swing_high is not None
-                    if leg_started and not state.pullback_confirmed:
-                        buffer_5m_poi.append(candle_5m)
+                    if event_loop is not None:
+                        asyncio.run_coroutine_threadsafe(
+                            ws_manager.send({
+                                "type": "candle",
+                                "symbol": "EURUSD",
+                                "tf": "5m",
+                                "timestamp": int(bucket_5m[0].time.timestamp() * 1000),
+                                "open": bucket_5m[0].open,
+                                "high": max(c.high for c in bucket_5m),
+                                "low": min(c.low for c in bucket_5m),
+                                "close": bucket_5m[-1].close,
+                            }),
+                            event_loop
+                        )
 
-                    # Clear bucket
+
+                    # Clear 5m bucket
+                    buffer_5m.append(candle_5m)
                     bucket_5m.clear()
+
+
+                # ---------------- 4H CANDLE ----------------
+                if len(buffer_5m) == 48:  # 48 × 5m = 4h
+                    candle_4h = {
+                        "time": buffer_5m[0]["time"],
+                        "open": buffer_5m[0]["open"],
+                        "high": max(c["high"] for c in buffer_5m),
+                        "low": min(c["low"] for c in buffer_5m),
+                        "close": buffer_5m[-1]["close"],
+                    }
+
+                    if event_loop is not None:
+                        asyncio.run_coroutine_threadsafe(
+                            ws_manager.send({
+                                "type": "candle",
+                                "symbol": "EURUSD",
+                                "tf": "4h",
+                                "timestamp": int(buffer_5m[0]["time"].timestamp() * 1000),
+                                "open": buffer_5m[0]["open"],
+                                "high": max(c["high"] for c in buffer_5m),
+                                "low": min(c["low"] for c in buffer_5m),
+                                "close": buffer_5m[-1]["close"],
+                            }),
+                            event_loop
+                        )
+
+                    # Clear 4h buffer
+                    buffer_5m.clear()
+  
 
                     # --------------------------------------------------
                     # 2. BUILD 4H CANDLE
@@ -168,6 +221,22 @@ def main():
                             "low": min(c["low"] for c in buffer_5m),
                             "close": buffer_5m[-1]["close"],
                         }
+                        if event_loop is not None:
+                            event_loop.call_soon_threadsafe(
+                                asyncio.create_task,
+                                ws_manager.send({
+                                    "symbol": "EURUSD",
+                                    "tf": "4h",
+                                    "time": int(buffer_5m[0]["time"].timestamp() * 1000),
+                                    "open": buffer_5m[0]["open"],
+                                    "high": max(c["high"] for c in buffer_5m),
+                                    "low": min(c["low"] for c in buffer_5m),
+                                    "close": buffer_5m[-1]["close"],
+                                })
+                            )
+
+
+
 
                         buffer_5m.clear()
 
