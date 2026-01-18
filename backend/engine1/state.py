@@ -82,3 +82,7 @@ class PairState:
     entry_filled: bool = False
 
     choch_5m_this_candle: bool = False  # flag to mark the exact candle where 5M CHOCH occurred
+    
+    
+    leg_locked = False
+    last_leg_start_time = None

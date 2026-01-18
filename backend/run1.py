@@ -48,8 +48,8 @@ SYMBOL = "EURUSD"  # Example symbol for now (single pair)
 state = registry.get_state(SYMBOL)  # Access the persistent state for this pair
 
 # Set pullback params in state (these can later be config-driven)
-state.pullback_pct = 0.02
-state.min_pullback_candles = 2
+state.pullback_pct = 0.35
+state.min_pullback_candles = 10
 # ==================================================
 # SEED / BOOTSTRAP (HISTORICAL CONTEXT)
 # ==================================================
@@ -148,9 +148,7 @@ def main():
                     close=float(c)
                 )
                 bucket_5m.append(candle_1m)
-                if t.minute % 5 == 1:
-                    print(f"📥 Received 1M Candle @ {t}")
-
+                
                 # -----------------------------
                 # 1. Build 5M candle incrementally
                 # -----------------------------
@@ -163,21 +161,21 @@ def main():
                         "low": min(c.low for c in bucket_5m),
                         "close": bucket_5m[-1].close,
                     }
-                    print(f"--- 5M GATE CHECK @ {candle_5m['time']} | PB: {state.pullback_confirmed} | H4_EV: {state.h4_structure_event}")
-                    if event_loop is not None:
-                        asyncio.run_coroutine_threadsafe(
-                            ws_manager.send({
-                                "type": "candle",
-                                "symbol": "EURUSD",
-                                "tf": "5m",
-                                "timestamp": int(bucket_5m[0].time.timestamp() * 1000),
-                                "open": bucket_5m[0].open,
-                                "high": max(c.high for c in bucket_5m),
-                                "low": min(c.low for c in bucket_5m),
-                                "close": bucket_5m[-1].close,
-                            }),
-                            event_loop
-                        )
+                    # print(f"--- 5M GATE CHECK @ {candle_5m['time']} | PB: {state.pullback_confirmed} | H4_EV: {state.h4_structure_event}")
+                    # if event_loop is not None:
+                    #     asyncio.run_coroutine_threadsafe(
+                    #         ws_manager.send({
+                    #             "type": "candle",
+                    #             "symbol": "EURUSD",
+                    #             "tf": "5m",
+                    #             "timestamp": int(bucket_5m[0].time.timestamp() * 1000),
+                    #             "open": bucket_5m[0].open,
+                    #             "high": max(c.high for c in bucket_5m),
+                    #             "low": min(c.low for c in bucket_5m),
+                    #             "close": bucket_5m[-1].close,
+                    #         }),
+                    #         event_loop
+                    #     )
 
 
                     # Clear 5m bucket
@@ -229,18 +227,25 @@ def main():
 
                     if state.trend_4h == "BULLISH":
                         if state.candidate_high is None or candle_4h["high"] > state.candidate_high:
+                            old_h = state.candidate_high
                             state.candidate_high = candle_4h["high"]
                             state.bearish_count = 0
+                            print(f"   [4H] New Candidate High: {state.candidate_high} (was {old_h}) @ {candle_4h['time']}")
 
                         if candle_4h["close"] < candle_4h["open"] and candle_4h["high"] < state.candidate_high:
                             state.bearish_count += 1
+                            print(f"   [4H] Bearish candle below candidate high. Count: {state.bearish_count}")
 
                         if state.swing_low and state.candidate_high:
                             depth_ratio = (state.candidate_high - min(candle_4h["low"], candle_4h["close"])) / max(state.candidate_high - state.swing_low, 1e-9)
-                            if state.bearish_count >= state.min_pullback_candles or depth_ratio >= state.pullback_pct:
+                            if not state.pullback_confirmed:
+                                print(f"   [4H] Pullback Depth: {depth_ratio:.2f} (Target: {state.pullback_pct})")
+                            if state.pullback_confirmed==False and (state.bearish_count >= state.min_pullback_candles or depth_ratio >= state.pullback_pct):
                                 state.pullback_confirmed = True
                                 state.pullback_time = candle_4h["time"]
-                                print(f"🌊 4H PULLBACK CONFIRMED (BULLISH) @ {state.pullback_time} | Depth: {depth_ratio:.2f}")
+                                print(f"\n🌊 [4H BULLISH PB] CONFIRMED @ {state.pullback_time}")
+                                print(f"   | Reason: {'Count (' + str(state.bearish_count) + ')' if state.bearish_count >= state.min_pullback_candles else 'Depth (' + f'{depth_ratio:.2f}' + ')'}")
+                                print(f"   | Swing High Set: {state.candidate_high}")
                                 state.h4_structure_event=None
                                 state.swing_high = state.candidate_high
 
@@ -371,7 +376,9 @@ def main():
 
                         if state.pullback_confirmed:
                             if state.swing_low and candle_4h["close"] < state.swing_low:
-                                print(f"🟥 BEARISH CHOCH @ {candle_4h['time']} in BULLISH trend")
+                                print(f"\n🟥 [4H CHOCH] BEARISH @ {candle_4h['time']}")
+                                print(f"   | Previous Swing Low Broken: {state.swing_low}")
+                                print(f"   | New Trend: BEARISH")
                                 state.bos_time_4h = candle_4h["time"]
                                 state.choch_level_4h = candle_4h["close"]
                                 state.h4_structure_event = "CHOCH"
@@ -385,6 +392,8 @@ def main():
                                 state.pullback_time = None
                                 state.bullish_count = 0
                                 state.bearish_count = 0
+                                print(f"   | Structural Swing High (old leg): {state.swing_high}")
+                                print(f"   | Initial Candidate Low: {state.candidate_low}")
 
                                 # 📡 Broadcast CHOCH
                                 event_payload = {
@@ -411,7 +420,8 @@ def main():
 
                         if state.pullback_confirmed:
                             if state.trend_4h == "BULLISH" and state.swing_high is not None and candle_4h["close"] > state.swing_high:
-                                print(f"🟦 BOS WITHOUT POI @ {candle_4h['time']} in 4H")
+                                print(f"\n🟦 [4H BOS] BULLISH @ {candle_4h['time']}")
+                                print(f"   | Previous Swing High Broken: {state.swing_high}")
                                 state.bos_level_4h = candle_4h["close"]
                                 state.bos_time_4h= candle_4h["time"]
                                 state.h4_structure_event="BOS"
@@ -419,6 +429,7 @@ def main():
                                 # 🔹 Calculate new swing LOW from old leg
                                 if leg_buffer_4h:
                                     state.swing_low= min(c["low"] for c in leg_buffer_4h)
+                                    print(f"   | New Swing Low (old leg): {state.swing_low}")
                                 state.pullback_confirmed = False
                                 state.pullback_time = None
                                 state.bullish_count = 0
@@ -449,18 +460,25 @@ def main():
 
                     elif state.trend_4h == "BEARISH":
                         if state.candidate_low is None or candle_4h["low"] < state.candidate_low:
+                            old_l = state.candidate_low
                             state.candidate_low = candle_4h["low"]
                             state.bullish_count = 0
+                            print(f"   [4H] New Candidate Low: {state.candidate_low} (was {old_l}) @ {candle_4h['time']}")
 
                         if candle_4h["close"] > candle_4h["open"] and candle_4h["low"] > state.candidate_low:
                             state.bullish_count += 1
+                            print(f"   [4H] Bullish candle above candidate low. Count: {state.bullish_count}")
 
                         if state.swing_high and state.candidate_low:
                             depth_ratio = (candle_4h["high"] - state.candidate_low) / max(state.swing_high - state.candidate_low, 1e-9)
-                            if state.bullish_count >= state.min_pullback_candles or depth_ratio >= state.pullback_pct:
+                            if not state.pullback_confirmed:
+                                print(f"   [4H] Pullback Depth: {depth_ratio:.2f} (Target: {state.pullback_pct})")
+                            if state.pullback_confirmed==False and (state.bullish_count >= state.min_pullback_candles or depth_ratio >= state.pullback_pct):
                                 state.pullback_confirmed = True
                                 state.pullback_time = candle_4h["time"]
-                                print(f"🌊 4H PULLBACK CONFIRMED (BEARISH) @ {state.pullback_time} | Depth: {depth_ratio:.2f}")
+                                print(f"\n🌊 [4H BEARISH PB] CONFIRMED @ {state.pullback_time}")
+                                print(f"   | Reason: {'Count (' + str(state.bullish_count) + ')' if state.bullish_count >= state.min_pullback_candles else 'Depth (' + f'{depth_ratio:.2f}' + ')'}")
+                                print(f"   | Swing Low Set: {state.candidate_low}")
                                 state.h4_structure_event=None
                                 state.swing_low = state.candidate_low
                                 state.bullish_count = 0
@@ -588,7 +606,9 @@ def main():
 
                         if state.pullback_confirmed:
                             if state.swing_high and candle_4h["close"] > state.swing_high:
-                                print(f"🟩 BULLISH CHOCH @ {candle_4h['time']} in BEARISH trend")
+                                print(f"\n🟩 [4H CHOCH] BULLISH @ {candle_4h['time']}")
+                                print(f"   | Previous Swing High Broken: {state.swing_high}")
+                                print(f"   | New Trend: BULLISH")
                                 state.bos_time_4h = candle_4h["time"]
                                 state.choch_level_4h = candle_4h["close"]
                                 state.h4_structure_event="CHOCH"
@@ -600,6 +620,8 @@ def main():
                                 state.pullback_time = None
                                 state.bullish_count = 0
                                 state.bearish_count = 0
+                                print(f"   | Structural Swing Low (old leg): {state.swing_low}")
+                                print(f"   | Initial Candidate High: {state.candidate_high}")
 
                                 # 📡 Broadcast CHOCH
                                 event_payload = {
@@ -626,7 +648,8 @@ def main():
 
                         if state.pullback_confirmed:
                             if state.trend_4h == "BEARISH" and state.swing_low is not None and candle_4h["close"] < state.swing_low:
-                                print(f"🟦 BOS WITHOUT POI @ {candle_4h['time']} in 4H")
+                                print(f"\n🟦 [4H BOS] BEARISH @ {candle_4h['time']}")
+                                print(f"   | Previous Swing Low Broken: {state.swing_low}")
                                 state.bos_level_4h = candle_4h["close"]
                                 state.bos_time_4h = candle_4h["time"]
                                 state.h4_structure_event="BOS"
@@ -634,6 +657,7 @@ def main():
                                 # 🔹 New swing HIGH from previous leg
                                 if leg_buffer_4h:
                                     state.swing_high = max(c["high"] for c in leg_buffer_4h)
+                                    print(f"   | New Swing High (old leg): {state.swing_high}")
                                 state.pullback_confirmed = False
                                 state.pullback_time = None
                                 state.bullish_count = 0
@@ -662,429 +686,429 @@ def main():
                                 leg_buffer_4h.clear()
                                 buffer_5m.clear()
 
-                # --------------------------------------------------
-                # 5M GATING LOGIC
-                # --------------------------------------------------
+                # # --------------------------------------------------
+                # # 5M GATING LOGIC
+                # # --------------------------------------------------
 
-                # ❌ Gate 1: Ignore all 5M candles until 4H pullback is confirmed
-                if not state.pullback_confirmed:
-                    continue
+                # # ❌ Gate 1: Ignore all 5M candles until 4H pullback is confirmed
+                # if not state.pullback_confirmed:
+                #     continue
                 
-                print(f"🕯️ Processing 5M Candle @ {candle_5m['time']} | Trend 4H: {state.trend_4h}")
-                bull_candle_5m = candle_5m["close"] > candle_5m["open"]
-                bear_candle_5m = candle_5m["close"] < candle_5m["open"]
-                if state.trend_4h == "BULLISH":
-                    state.trend_5m = "BEARISH"
+                # print(f"🕯️ Processing 5M Candle @ {candle_5m['time']} | Trend 4H: {state.trend_4h}")
+                # bull_candle_5m = candle_5m["close"] > candle_5m["open"]
+                # bear_candle_5m = candle_5m["close"] < candle_5m["open"]
+                # if state.trend_4h == "BULLISH":
+                #     state.trend_5m = "BEARISH"
 
-                    if state.candidate_low_5m is None:
-                        state.candidate_low_5m = candle_5m["low"]
-                        state.pullback_count_5m = 0
-                        if state.swing_high_5m is None:
-                            state.swing_high_5m = candle_5m["high"]
-                            state.swing_high_5m_time = candle_5m["time"]
-                        continue
+                #     if state.candidate_low_5m is None:
+                #         state.candidate_low_5m = candle_5m["low"]
+                #         state.pullback_count_5m = 0
+                #         if state.swing_high_5m is None:
+                #             state.swing_high_5m = candle_5m["high"]
+                #             state.swing_high_5m_time = candle_5m["time"]
+                #         continue
 
-                    if bull_candle_5m and (state.pullback_count_5m == 0 or state.pullback_count_5m == 1):
-                        state.pullback_count_5m += 1
+                #     if bull_candle_5m and (state.pullback_count_5m == 0 or state.pullback_count_5m == 1):
+                #         state.pullback_count_5m += 1
 
-                    if candle_5m["low"] < state.candidate_low_5m:
-                        state.candidate_low_5m = candle_5m["low"]
+                #     if candle_5m["low"] < state.candidate_low_5m:
+                #         state.candidate_low_5m = candle_5m["low"]
 
-                    retrace = (candle_5m["high"] - state.candidate_low_5m) / max(state.swing_high_5m - state.candidate_low_5m, 1e-9)
-                    valid_pullback_5m = state.pullback_count_5m >= 2 or retrace >= 0.99
-                    print(f"   5M Pullback Check: Count={state.pullback_count_5m}, Retrace={retrace:.2f}, Valid={valid_pullback_5m}")
+                #     retrace = (candle_5m["high"] - state.candidate_low_5m) / max(state.swing_high_5m - state.candidate_low_5m, 1e-9)
+                #     valid_pullback_5m = state.pullback_count_5m >= 2 or retrace >= 0.99
+                #     print(f"   5M Pullback Check: Count={state.pullback_count_5m}, Retrace={retrace:.2f}, Valid={valid_pullback_5m}")
 
-                    if valid_pullback_5m:
-                        state.buffer_5m_sh.append(candle_5m)    
-                        #BOS 5m                        
-                        if candle_5m["low"] < state.candidate_low_5m:
-                            swing_candle = max(
-                                state.buffer_5m_sh,
-                                key=lambda c: c["high"]
-                            )
+                #     if valid_pullback_5m:
+                #         state.buffer_5m_sh.append(candle_5m)    
+                #         #BOS 5m                        
+                #         if candle_5m["low"] < state.candidate_low_5m:
+                #             swing_candle = max(
+                #                 state.buffer_5m_sh,
+                #                 key=lambda c: c["high"]
+                #             )
 
-                            state.swing_high_5m = swing_candle["high"]
-                            state.swing_high_5m_time = swing_candle["time"] 
-                            state.protected_5m_point = state.swing_high_5m
-                            state.protected_5m_time  = state.swing_high_5m_time  
+                #             state.swing_high_5m = swing_candle["high"]
+                #             state.swing_high_5m_time = swing_candle["time"] 
+                #             state.protected_5m_point = state.swing_high_5m
+                #             state.protected_5m_time  = state.swing_high_5m_time  
                             
-                            state.candidate_low_5m = candle_5m["low"]
-                            state.pullback_count_5m=0
-                            state.buffer_5m_sh.clear()
+                #             state.candidate_low_5m = candle_5m["low"]
+                #             state.pullback_count_5m=0
+                #             state.buffer_5m_sh.clear()
 
-                            # 📡 Broadcast 5M BOS
-                            event_payload = {
-                                "symbol": "EURUSD",
-                                "timeframe": "5m",
-                                "events": [
-                                    {
-                                        "id": f"5m_BOS_{candle_5m['time'].strftime('%Y%m%d_%H%M')}",
-                                        "type": "BOS",
-                                        "direction": "BEARISH",
-                                        "broken_level": candle_5m["low"],
-                                        "time": candle_5m["time"].isoformat()
-                                    }
-                                ]
-                            }
-                            print(f"📡 Sending 5M BOS (BEARISH): {event_payload}")
-                            if event_loop is not None:
-                                asyncio.run_coroutine_threadsafe(event_manager.broadcast(event_payload), event_loop)
-                        #CHOCH 5m
-                        if candle_5m["high"] > state.swing_high_5m:
-                            state.trend_5m = "BULLISH"
-                            state.swing_low_5m = state.candidate_low_5m
-                            state.pullback_count_5m=0
-                            state.candidate_high_5m= candle_5m["high"]
-                            choch_5m_this_candle = True
-                            print(f"🚀 5M BULLISH CHOCH @ {candle_5m['time']} | Broken High: {state.swing_high_5m}")
-                            state.buffer_5m_sh.clear()
+                #             # 📡 Broadcast 5M BOS
+                #             event_payload = {
+                #                 "symbol": "EURUSD",
+                #                 "timeframe": "5m",
+                #                 "events": [
+                #                     {
+                #                         "id": f"5m_BOS_{candle_5m['time'].strftime('%Y%m%d_%H%M')}",
+                #                         "type": "BOS",
+                #                         "direction": "BEARISH",
+                #                         "broken_level": candle_5m["low"],
+                #                         "time": candle_5m["time"].isoformat()
+                #                     }
+                #                 ]
+                #             }
+                #             print(f"📡 Sending 5M BOS (BEARISH): {event_payload}")
+                #             if event_loop is not None:
+                #                 asyncio.run_coroutine_threadsafe(event_manager.broadcast(event_payload), event_loop)
+                #         #CHOCH 5m
+                #         if candle_5m["high"] > state.swing_high_5m:
+                #             state.trend_5m = "BULLISH"
+                #             state.swing_low_5m = state.candidate_low_5m
+                #             state.pullback_count_5m=0
+                #             state.candidate_high_5m= candle_5m["high"]
+                #             choch_5m_this_candle = True
+                #             print(f"🚀 5M BULLISH CHOCH @ {candle_5m['time']} | Broken High: {state.swing_high_5m}")
+                #             state.buffer_5m_sh.clear()
 
-                            # 📡 Broadcast 5M CHOCH
-                            event_payload = {
-                                "symbol": "EURUSD",
-                                "timeframe": "5m",
-                                "events": [
-                                    {
-                                        "id": f"5m_CHOCH_{candle_5m['time'].strftime('%Y%m%d_%H%M')}",
-                                        "type": "CHOCH",
-                                        "broken_level": state.swing_high_5m,
-                                        "time": candle_5m["time"].isoformat()
-                                    }
-                                ]
-                            }
-                            print(f"📡 Sending 5M CHOCH (BULLISH): {event_payload}")
-                            if event_loop is not None:
-                                asyncio.run_coroutine_threadsafe(event_manager.broadcast(event_payload), event_loop)
-                        # --------------------------------------------------
-                        # 5M POI TAP CHECK (Realtime)
-                        # --------------------------------------------------
-                        if state.mapped_pois and not state.poi_tapped and state.active_poi is None:
-                            for poi in state.mapped_pois:
-                                if poi.get("state") == "INVALIDATED":
-                                    continue
-                                poi_type = poi["type"]
-                                poi_trend = poi["trend"]
+                #             # 📡 Broadcast 5M CHOCH
+                #             event_payload = {
+                #                 "symbol": "EURUSD",
+                #                 "timeframe": "5m",
+                #                 "events": [
+                #                     {
+                #                         "id": f"5m_CHOCH_{candle_5m['time'].strftime('%Y%m%d_%H%M')}",
+                #                         "type": "CHOCH",
+                #                         "broken_level": state.swing_high_5m,
+                #                         "time": candle_5m["time"].isoformat()
+                #                     }
+                #                 ]
+                #             }
+                #             print(f"📡 Sending 5M CHOCH (BULLISH): {event_payload}")
+                #             if event_loop is not None:
+                #                 asyncio.run_coroutine_threadsafe(event_manager.broadcast(event_payload), event_loop)
+                #         # --------------------------------------------------
+                #         # 5M POI TAP CHECK (Realtime)
+                #         # --------------------------------------------------
+                #         if state.mapped_pois and not state.poi_tapped and state.active_poi is None:
+                #             for poi in state.mapped_pois:
+                #                 if poi.get("state") == "INVALIDATED":
+                #                     continue
+                #                 poi_type = poi["type"]
+                #                 poi_trend = poi["trend"]
 
-                                if poi_trend == "BULLISH":
-                                    if poi_type == "OB":
-                                        # OB overlap
-                                        if candle_5m["low"] <= poi["price_high"] and candle_5m["high"] >= poi["price_low"]:
-                                            state.poi_tapped = True
-                                            state.active_poi=poi
-                                            print(f"🎯 POI TAPPED (OB) @ {candle_5m['time']} | Level: {poi['price_low']}-{poi['price_high']}")
-                                            state.poi_tapped_level=candle_5m["low"]
-                                            state.poi_tapped_time=candle_5m["time"]
+                #                 if poi_trend == "BULLISH":
+                #                     if poi_type == "OB":
+                #                         # OB overlap
+                #                         if candle_5m["low"] <= poi["price_high"] and candle_5m["high"] >= poi["price_low"]:
+                #                             state.poi_tapped = True
+                #                             state.active_poi=poi
+                #                             print(f"🎯 POI TAPPED (OB) @ {candle_5m['time']} | Level: {poi['price_low']}-{poi['price_high']}")
+                #                             state.poi_tapped_level=candle_5m["low"]
+                #                             state.poi_tapped_time=candle_5m["time"]
                                             
-                                            break
-                                    elif poi_type == "LIQ":
-                                        # LIQ sweep
-                                        if candle_5m["low"] <= poi["price"]:
-                                            state.poi_tapped = True
-                                            state.active_poi=poi
-                                            print(f"🎯 POI TAPPED (LIQ) @ {candle_5m['time']} | Level: {poi['price']}")
-                                            state.poi_tapped_level=candle_5m["low"]
-                                            state.poi_tapped_time=candle_5m["time"]
+                #                             break
+                #                     elif poi_type == "LIQ":
+                #                         # LIQ sweep
+                #                         if candle_5m["low"] <= poi["price"]:
+                #                             state.poi_tapped = True
+                #                             state.active_poi=poi
+                #                             print(f"🎯 POI TAPPED (LIQ) @ {candle_5m['time']} | Level: {poi['price']}")
+                #                             state.poi_tapped_level=candle_5m["low"]
+                #                             state.poi_tapped_time=candle_5m["time"]
                                             
-                                            break
-                        # POST POI TAP                
-                        if state.poi_tapped:
+                #                             break
+                #         # POST POI TAP                
+                #         if state.poi_tapped:
 
-                            # --------------------------------------------------
-                            #  POI INVALIDATION (Realtime)
-                            # --------------------------------------------------
-                            poi_invalidated = False
+                #             # --------------------------------------------------
+                #             #  POI INVALIDATION (Realtime)
+                #             # --------------------------------------------------
+                #             poi_invalidated = False
 
-                            active_poi = state.active_poi
+                #             active_poi = state.active_poi
 
-                            # ⛔ Do NOT invalidate on tap candle
-                            if candle_5m["time"] > state.poi_tapped_time and state.active_poi:
+                #             # ⛔ Do NOT invalidate on tap candle
+                #             if candle_5m["time"] > state.poi_tapped_time and state.active_poi:
 
-                                active_poi = state.active_poi
-                                invalidation_level = None
+                #                 active_poi = state.active_poi
+                #                 invalidation_level = None
 
-                                # Find next POI (order-aware) if it exists
-                                next_poi = None
-                                for poi in state.mapped_pois:
-                                    if poi is active_poi:
-                                        continue
-                                    if poi.get("state") != "INVALIDATED":
-                                        next_poi = poi
-                                        break  # first non-invalidated POI after current active POI
+                #                 # Find next POI (order-aware) if it exists
+                #                 next_poi = None
+                #                 for poi in state.mapped_pois:
+                #                     if poi is active_poi:
+                #                         continue
+                #                     if poi.get("state") != "INVALIDATED":
+                #                         next_poi = poi
+                #                         break  # first non-invalidated POI after current active POI
 
-                                p0_type = active_poi["type"]
-                                trend = state.trend_4h
+                #                 p0_type = active_poi["type"]
+                #                 trend = state.trend_4h
 
-                                # =========================
-                                # BULLISH TREND
-                                # =========================
-                                if trend == "BULLISH":
+                #                 # =========================
+                #                 # BULLISH TREND
+                #                 # =========================
+                #                 if trend == "BULLISH":
 
-                                    if next_poi:
-                                        p1_type = next_poi["type"]
+                #                     if next_poi:
+                #                         p1_type = next_poi["type"]
 
-                                        if p0_type == "OB" and p1_type == "OB":
-                                            invalidation_level = (active_poi["price_high"] + next_poi["price_high"]) / 2
+                #                         if p0_type == "OB" and p1_type == "OB":
+                #                             invalidation_level = (active_poi["price_high"] + next_poi["price_high"]) / 2
 
-                                        elif p0_type == "OB" and p1_type == "LIQ":
-                                            invalidation_level = (active_poi["price_high"] + next_poi["price"]) / 2
+                #                         elif p0_type == "OB" and p1_type == "LIQ":
+                #                             invalidation_level = (active_poi["price_high"] + next_poi["price"]) / 2
 
-                                        elif p0_type == "LIQ" and p1_type == "LIQ":
-                                            invalidation_level = (active_poi["price"] + next_poi["price"]) / 2
+                #                         elif p0_type == "LIQ" and p1_type == "LIQ":
+                #                             invalidation_level = (active_poi["price"] + next_poi["price"]) / 2
 
-                                    else:
-                                        # No next POI → fallback to 4H swing low
-                                        if p0_type == "OB":
-                                            invalidation_level = (active_poi["price_high"] + state.swing_low) / 2
-                                        else:
-                                            invalidation_level = (active_poi["price"] + state.swing_low) / 2
+                #                     else:
+                #                         # No next POI → fallback to 4H swing low
+                #                         if p0_type == "OB":
+                #                             invalidation_level = (active_poi["price_high"] + state.swing_low) / 2
+                #                         else:
+                #                             invalidation_level = (active_poi["price"] + state.swing_low) / 2
 
-                                    if invalidation_level is not None and candle_5m["low"] < invalidation_level:
-                                        poi_invalidated = True
-                                        state.active_poi["state"] = "INVALIDATED"
+                #                     if invalidation_level is not None and candle_5m["low"] < invalidation_level:
+                #                         poi_invalidated = True
+                #                         state.active_poi["state"] = "INVALIDATED"
                                 
-                            # --------------------------------------------------
-                            # 🔥 APPLY INVALIDATION
-                            # --------------------------------------------------
-                            if poi_invalidated:
-                                print(f"❌ POI INVALIDATED @ {candle_5m['time']}")
+                #             # --------------------------------------------------
+                #             # 🔥 APPLY INVALIDATION
+                #             # --------------------------------------------------
+                #             if poi_invalidated:
+                #                 print(f"❌ POI INVALIDATED @ {candle_5m['time']}")
 
-                                state.active_poi["state"] = "INVALIDATED"
+                #                 state.active_poi["state"] = "INVALIDATED"
 
-                                state.active_poi = None
-                                state.poi_tapped = False
-                                state.poi_tapped_level = None
-                                state.poi_tapped_time = None
+                #                 state.active_poi = None
+                #                 state.poi_tapped = False
+                #                 state.poi_tapped_level = None
+                #                 state.poi_tapped_time = None
 
-                                state.protected_5m_point = None
-                                state.protected_5m_time = None
+                #                 state.protected_5m_point = None
+                #                 state.protected_5m_time = None
 
-                                continue
+                #                 continue
 
 
-                            # --------------------------------------------------
-                            # TRADE SETUP (CHOCH + POI)
-                            # --------------------------------------------------
-                            if (
-                                choch_5m_this_candle
-                                and state.active_poi is not None
-                                and not poi_invalidated
-                                and not state.trade_planned
-                            ):
+                #             # --------------------------------------------------
+                #             # TRADE SETUP (CHOCH + POI)
+                #             # --------------------------------------------------
+                #             if (
+                #                 choch_5m_this_candle
+                #                 and state.active_poi is not None
+                #                 and not poi_invalidated
+                #                 and not state.trade_planned
+                #             ):
 
-                                # ==================================================
-                                # DETERMINE RANGE FOR 50% CALCULATION
-                                # ==================================================
-                                if state.trend_4h == "BULLISH":
-                                    # 4H bullish → 5M CHOCH is bullish break
-                                    range_high = candle_5m["high"]           # CHOCH candle high
-                                    range_low = state.swing_low_5m            # last bearish swing low
-                                    direction = "BUY"
-                                else:
-                                    # 4H bearish → 5M CHOCH is bearish break
-                                    range_low = candle_5m["low"]              # CHOCH candle low
-                                    range_high = state.swing_high_5m           # last bullish swing high
-                                    direction = "SELL"
+                #                 # ==================================================
+                #                 # DETERMINE RANGE FOR 50% CALCULATION
+                #                 # ==================================================
+                #                 if state.trend_4h == "BULLISH":
+                #                     # 4H bullish → 5M CHOCH is bullish break
+                #                     range_high = candle_5m["high"]           # CHOCH candle high
+                #                     range_low = state.swing_low_5m            # last bearish swing low
+                #                     direction = "BUY"
+                #                 else:
+                #                     # 4H bearish → 5M CHOCH is bearish break
+                #                     range_low = candle_5m["low"]              # CHOCH candle low
+                #                     range_high = state.swing_high_5m           # last bullish swing high
+                #                     direction = "SELL"
 
-                                # Safety check
-                                if range_high is None or range_low is None:
-                                    print("❌ Invalid range — trade skipped")
-                                    continue
+                #                 # Safety check
+                #                 if range_high is None or range_low is None:
+                #                     print("❌ Invalid range — trade skipped")
+                #                     continue
 
-                                # ==================================================
-                                # 50% RETRACEMENT ENTRY
-                                # ==================================================
-                                entry = (range_high + range_low) / 2
+                #                 # ==================================================
+                #                 # 50% RETRACEMENT ENTRY
+                #                 # ==================================================
+                #                 entry = (range_high + range_low) / 2
 
-                                pip = 0.0001
+                #                 pip = 0.0001
 
-                                if direction == "BUY":
-                                    stop_loss = range_low - 4 * pip
-                                    risk = entry - stop_loss
-                                    take_profit = entry + 3 * risk
-                                else:
-                                    stop_loss = range_high + 4 * pip
-                                    risk = stop_loss - entry
-                                    take_profit = entry - 3 * risk
+                #                 if direction == "BUY":
+                #                     stop_loss = range_low - 4 * pip
+                #                     risk = entry - stop_loss
+                #                     take_profit = entry + 3 * risk
+                #                 else:
+                #                     stop_loss = range_high + 4 * pip
+                #                     risk = stop_loss - entry
+                #                     take_profit = entry - 3 * risk
 
-                                # Risk validation
-                                if risk <= 0:
-                                    print("❌ Invalid risk — trade skipped")
-                                    continue
+                #                 # Risk validation
+                #                 if risk <= 0:
+                #                     print("❌ Invalid risk — trade skipped")
+                #                     continue
 
-                                # ==================================================
-                                # STORE TRADE IN STATE (FOR PLOTTING / EXECUTION)
-                                # ==================================================
-                                state.trade = {
-                                    "direction": direction,
-                                    "entry": float(entry),
-                                    "sl": float(stop_loss),
-                                    "tp": float(take_profit),
-                                    "rr": 3.0,
+                #                 # ==================================================
+                #                 # STORE TRADE IN STATE (FOR PLOTTING / EXECUTION)
+                #                 # ==================================================
+                #                 state.trade = {
+                #                     "direction": direction,
+                #                     "entry": float(entry),
+                #                     "sl": float(stop_loss),
+                #                     "tp": float(take_profit),
+                #                     "rr": 3.0,
 
-                                    # Context
-                                    "htf_trend": state.trend_4h,
-                                    "poi_type": state.active_poi["type"],
-                                    "poi_price_low": state.active_poi.get("price_low"),
-                                    "poi_price_high": state.active_poi.get("price_high"),
-                                    "poi_time": state.poi_tapped_time,
+                #                     # Context
+                #                     "htf_trend": state.trend_4h,
+                #                     "poi_type": state.active_poi["type"],
+                #                     "poi_price_low": state.active_poi.get("price_low"),
+                #                     "poi_price_high": state.active_poi.get("price_high"),
+                #                     "poi_time": state.poi_tapped_time,
 
-                                    "choch_time": candle_5m["time"],
-                                    "range_high": float(range_high),
-                                    "range_low": float(range_low),
+                #                     "choch_time": candle_5m["time"],
+                #                     "range_high": float(range_high),
+                #                     "range_low": float(range_low),
 
-                                    # Lifecycle
-                                    "planned_time": candle_5m["time"],
-                                    "status": "PLANNED",
-                                }
+                #                     # Lifecycle
+                #                     "planned_time": candle_5m["time"],
+                #                     "status": "PLANNED",
+                #                 }
 
-                                state.trade_planned = True
+                #                 state.trade_planned = True
 
-                                # 📡 Broadcast 5M Retracement & Trade Plan
-                                ts_str = candle_5m['time'].strftime('%Y%m%d_%H%M')
-                                iso_start = candle_5m['time'].isoformat()
-                                iso_end = (candle_5m['time'] + pd.Timedelta(minutes=25)).isoformat()
+                #                 # 📡 Broadcast 5M Retracement & Trade Plan
+                #                 ts_str = candle_5m['time'].strftime('%Y%m%d_%H%M')
+                #                 iso_start = candle_5m['time'].isoformat()
+                #                 iso_end = (candle_5m['time'] + pd.Timedelta(minutes=25)).isoformat()
                                 
-                                # Retracement payload
-                                retr_event = {
-                                    "symbol": SYMBOL,
-                                    "timeframe": "5m",
-                                    "events": [
-                                        {
-                                            "id": f"5m_RETR_{ts_str}",
-                                            "type": "RETRACEMENT",
-                                            "start": float(range_low),
-                                            "end": float(range_high),
-                                            "mid": float(entry),
-                                            "time_start": iso_start,
-                                            "time_end": iso_end,
-                                            "extend_candles": 5
-                                        }
-                                    ]
-                                }
+                #                 # Retracement payload
+                #                 retr_event = {
+                #                     "symbol": SYMBOL,
+                #                     "timeframe": "5m",
+                #                     "events": [
+                #                         {
+                #                             "id": f"5m_RETR_{ts_str}",
+                #                             "type": "RETRACEMENT",
+                #                             "start": float(range_low),
+                #                             "end": float(range_high),
+                #                             "mid": float(entry),
+                #                             "time_start": iso_start,
+                #                             "time_end": iso_end,
+                #                             "extend_candles": 5
+                #                         }
+                #                     ]
+                #                 }
                                 
-                                # Trade Plan payload
-                                plan_event = {
-                                    "symbol": SYMBOL,
-                                    "timeframe": "5m",
-                                    "events": [
-                                        {
-                                            "id": f"5m_RETR_{ts_str}",
-                                            "type": "TRADE_PLAN",
-                                            "plan_direction": "LONG" if direction == "BUY" else "SHORT",
-                                            "SL": float(stop_loss),
-                                            "TP": float(take_profit),
-                                            "Entry": float(entry),
-                                            "time_start": iso_start,
-                                            "time_end": iso_end
-                                        }
-                                    ]
-                                }
+                #                 # Trade Plan payload
+                #                 plan_event = {
+                #                     "symbol": SYMBOL,
+                #                     "timeframe": "5m",
+                #                     "events": [
+                #                         {
+                #                             "id": f"5m_RETR_{ts_str}",
+                #                             "type": "TRADE_PLAN",
+                #                             "plan_direction": "LONG" if direction == "BUY" else "SHORT",
+                #                             "SL": float(stop_loss),
+                #                             "TP": float(take_profit),
+                #                             "Entry": float(entry),
+                #                             "time_start": iso_start,
+                #                             "time_end": iso_end
+                #                         }
+                #                     ]
+                #                 }
                                 
-                                print(f"📡 Sending 5M Retracement & Trade Plan: {ts_str}")
-                                if event_loop is not None:
-                                    asyncio.run_coroutine_threadsafe(event_manager.broadcast(retr_event), event_loop)
-                                    asyncio.run_coroutine_threadsafe(event_manager.broadcast(plan_event), event_loop)
+                #                 print(f"📡 Sending 5M Retracement & Trade Plan: {ts_str}")
+                #                 if event_loop is not None:
+                #                     asyncio.run_coroutine_threadsafe(event_manager.broadcast(retr_event), event_loop)
+                #                     asyncio.run_coroutine_threadsafe(event_manager.broadcast(plan_event), event_loop)
 
-                                print("🚀 TRADE PLANNED & STORED")
-                                print(f"   Direction : {direction}")
-                                print(f"   Entry     : {entry}")
-                                print(f"   SL        : {stop_loss}")
-                                print(f"   TP        : {take_profit}")
+                #                 print("🚀 TRADE PLANNED & STORED")
+                #                 print(f"   Direction : {direction}")
+                #                 print(f"   Entry     : {entry}")
+                #                 print(f"   SL        : {stop_loss}")
+                #                 print(f"   TP        : {take_profit}")
 
 
-                            # --------------------------------------------------
-                            # TRADE MANAGEMENT (BUY ONLY - Realtime 5M)
-                            # --------------------------------------------------
-                            if state.trade_planned and state.trade is not None:
+                #             # --------------------------------------------------
+                #             # TRADE MANAGEMENT (BUY ONLY - Realtime 5M)
+                #             # --------------------------------------------------
+                #             if state.trade_planned and state.trade is not None:
 
-                                trade = state.trade
+                #                 trade = state.trade
 
-                                # Safety: only manage BUY trades here
-                                if trade["direction"] != "BUY":
-                                    pass
-                                else:
-                                    entry = trade["entry"]
-                                    sl = trade["sl"]
-                                    tp = trade["tp"]
+                #                 # Safety: only manage BUY trades here
+                #                 if trade["direction"] != "BUY":
+                #                     pass
+                #                 else:
+                #                     entry = trade["entry"]
+                #                     sl = trade["sl"]
+                #                     tp = trade["tp"]
 
-                                    candle_high = candle_5m["high"]
-                                    candle_low = candle_5m["low"]
-                                    candle_time = candle_5m["time"]
+                #                     candle_high = candle_5m["high"]
+                #                     candle_low = candle_5m["low"]
+                #                     candle_time = candle_5m["time"]
 
-                                    # ==================================================
-                                    # ENTRY NOT FILLED YET
-                                    # ==================================================
-                                    if not state.entry_filled:
+                #                     # ==================================================
+                #                     # ENTRY NOT FILLED YET
+                #                     # ==================================================
+                #                     if not state.entry_filled:
 
-                                        entry_filled_this_candle = False
+                #                         entry_filled_this_candle = False
 
-                                        # -----------------------------
-                                        # ENTRY CHECK FIRST
-                                        # -----------------------------
-                                        if candle_low <= entry <= candle_high:
-                                            entry_filled_this_candle = True
+                #                         # -----------------------------
+                #                         # ENTRY CHECK FIRST
+                #                         # -----------------------------
+                #                         if candle_low <= entry <= candle_high:
+                #                             entry_filled_this_candle = True
 
-                                        if entry_filled_this_candle:
-                                            state.entry_filled = True
-                                            trade["status"] = "OPEN"
-                                            trade["entry_time"] = candle_time
+                #                         if entry_filled_this_candle:
+                #                             state.entry_filled = True
+                #                             trade["status"] = "OPEN"
+                #                             trade["entry_time"] = candle_time
 
-                                            print(f"🟢 BUY ENTRY FILLED @ {entry} | {candle_time}")
+                #                             print(f"🟢 BUY ENTRY FILLED @ {entry} | {candle_time}")
 
-                                        else:
-                                            # --------------------------------------------------
-                                            # 2% TP MOVE WITHOUT ENTRY → INVALIDATE TRADE
-                                            # --------------------------------------------------
-                                            tp_2pct_level = entry + 0.02 * (tp - entry)
+                #                         else:
+                #                             # --------------------------------------------------
+                #                             # 2% TP MOVE WITHOUT ENTRY → INVALIDATE TRADE
+                #                             # --------------------------------------------------
+                #                             tp_2pct_level = entry + 0.02 * (tp - entry)
 
-                                            if candle_high >= tp_2pct_level:
-                                                print(
-                                                    f"🟩 TP MOVE WITHOUT ENTRY (2% HIT @ {tp_2pct_level}) → TRADE INVALID"
-                                                )
+                #                             if candle_high >= tp_2pct_level:
+                #                                 print(
+                #                                     f"🟩 TP MOVE WITHOUT ENTRY (2% HIT @ {tp_2pct_level}) → TRADE INVALID"
+                #                                 )
 
-                                                # 🔥 RESET TRADE STATE
-                                                state.trade = None
-                                                state.trade_planned = False
-                                                state.entry_filled = False
+                #                                 # 🔥 RESET TRADE STATE
+                #                                 state.trade = None
+                #                                 state.trade_planned = False
+                #                                 state.entry_filled = False
 
-                                                continue
+                #                                 continue
 
-                                    # ==================================================
-                                    # ENTRY FILLED → CHECK SL / TP
-                                    # ==================================================
-                                    else:
+                #                     # ==================================================
+                #                     # ENTRY FILLED → CHECK SL / TP
+                #                     # ==================================================
+                #                     else:
 
-                                        # -----------------------------
-                                        # STOP LOSS
-                                        # -----------------------------
-                                        if candle_low <= sl:
-                                            print(f"🟥 BUY SL HIT @ {sl}")
+                #                         # -----------------------------
+                #                         # STOP LOSS
+                #                         # -----------------------------
+                #                         if candle_low <= sl:
+                #                             print(f"🟥 BUY SL HIT @ {sl}")
 
-                                            trade["status"] = "SL"
-                                            trade["exit_time"] = candle_time
-                                            trade["exit_price"] = sl
+                #                             trade["status"] = "SL"
+                #                             trade["exit_time"] = candle_time
+                #                             trade["exit_price"] = sl
 
-                                            state.trade = None
-                                            state.trade_planned = False
-                                            state.entry_filled = False
+                #                             state.trade = None
+                #                             state.trade_planned = False
+                #                             state.entry_filled = False
 
-                                            continue
+                #                             continue
 
-                                        # -----------------------------
-                                        # TAKE PROFIT
-                                        # -----------------------------
-                                        elif candle_high >= tp:
-                                            print(f"🟩 BUY TP HIT @ {tp}")
+                #                         # -----------------------------
+                #                         # TAKE PROFIT
+                #                         # -----------------------------
+                #                         elif candle_high >= tp:
+                #                             print(f"🟩 BUY TP HIT @ {tp}")
 
-                                            trade["status"] = "TP"
-                                            trade["exit_time"] = candle_time
-                                            trade["exit_price"] = tp
+                #                             trade["status"] = "TP"
+                #                             trade["exit_time"] = candle_time
+                #                             trade["exit_price"] = tp
 
-                                            state.trade = None
-                                            state.trade_planned = False
-                                            state.entry_filled = False
+                #                             state.trade = None
+                #                             state.trade_planned = False
+                #                             state.entry_filled = False
 
-                                            continue
+                #                             continue
 
                             
 
@@ -1092,417 +1116,417 @@ def main():
 
 
 
-                elif state.trend_4h == "BEARISH":
-                    state.trend_5m = "BULLISH"
+                # elif state.trend_4h == "BEARISH":
+                #     state.trend_5m = "BULLISH"
 
-                    if state.candidate_high_5m is None:
-                        state.candidate_high_5m = candle_5m["high"]
-                        state.pullback_count_5m = 0
-                        if state.swing_low_5m is None:
-                            state.swing_low_5m = candle_5m["low"]
-                            state.swing_low_5m_time = candle_5m["time"]
-                        continue
+                #     if state.candidate_high_5m is None:
+                #         state.candidate_high_5m = candle_5m["high"]
+                #         state.pullback_count_5m = 0
+                #         if state.swing_low_5m is None:
+                #             state.swing_low_5m = candle_5m["low"]
+                #             state.swing_low_5m_time = candle_5m["time"]
+                #         continue
 
-                    if bear_candle_5m and (state.pullback_count_5m == 0 or state.pullback_count_5m == 1):
-                        state.pullback_count_5m += 1
+                #     if bear_candle_5m and (state.pullback_count_5m == 0 or state.pullback_count_5m == 1):
+                #         state.pullback_count_5m += 1
 
-                    if candle_5m["high"] > state.candidate_high_5m:
-                        state.candidate_high_5m = candle_5m["high"]
+                #     if candle_5m["high"] > state.candidate_high_5m:
+                #         state.candidate_high_5m = candle_5m["high"]
 
-                    retrace = (state.candidate_high_5m - candle_5m["low"]) / max(
-                        state.candidate_high_5m - state.swing_low_5m, 1e-9
-                    )
-                    valid_pullback_5m = state.pullback_count_5m >= 2 or retrace >= 0.99
+                #     retrace = (state.candidate_high_5m - candle_5m["low"]) / max(
+                #         state.candidate_high_5m - state.swing_low_5m, 1e-9
+                #     )
+                #     valid_pullback_5m = state.pullback_count_5m >= 2 or retrace >= 0.99
 
-                    if valid_pullback_5m:
-                        state.buffer_5m_sl.append(candle_5m)
+                #     if valid_pullback_5m:
+                #         state.buffer_5m_sl.append(candle_5m)
 
-                        # BOS 5m
-                        if candle_5m["high"] > state.candidate_high_5m:
-                            swing_candle = min(
-                                state.buffer_5m_sl,
-                                key=lambda c: c["low"]
-                            )
+                #         # BOS 5m
+                #         if candle_5m["high"] > state.candidate_high_5m:
+                #             swing_candle = min(
+                #                 state.buffer_5m_sl,
+                #                 key=lambda c: c["low"]
+                #             )
 
-                            state.swing_low_5m = swing_candle["low"]
-                            state.swing_low_5m_time = swing_candle["time"]
-                            state.protected_5m_point = state.swing_low_5m
-                            state.protected_5m_time = state.swing_low_5m_time
+                #             state.swing_low_5m = swing_candle["low"]
+                #             state.swing_low_5m_time = swing_candle["time"]
+                #             state.protected_5m_point = state.swing_low_5m
+                #             state.protected_5m_time = state.swing_low_5m_time
 
-                            state.candidate_high_5m = candle_5m["high"]
-                            state.pullback_count_5m = 0
-                            state.buffer_5m_sl.clear()
+                #             state.candidate_high_5m = candle_5m["high"]
+                #             state.pullback_count_5m = 0
+                #             state.buffer_5m_sl.clear()
 
-                            # 📡 Broadcast 5M BOS
-                            event_payload = {
-                                "symbol": "EURUSD",
-                                "timeframe": "5m",
-                                "events": [
-                                    {
-                                        "id": f"5m_BOS_{candle_5m['time'].strftime('%Y%m%d_%H%M')}",
-                                        "type": "BOS",
-                                        "direction": "BULLISH",
-                                        "broken_level": candle_5m["high"],
-                                        "time": candle_5m["time"].isoformat()
-                                    }
-                                ]
-                            }
-                            print(f"📡 Sending 5M BOS (BULLISH): {event_payload}")
-                            if event_loop is not None:
-                                asyncio.run_coroutine_threadsafe(event_manager.broadcast(event_payload), event_loop)
+                #             # 📡 Broadcast 5M BOS
+                #             event_payload = {
+                #                 "symbol": "EURUSD",
+                #                 "timeframe": "5m",
+                #                 "events": [
+                #                     {
+                #                         "id": f"5m_BOS_{candle_5m['time'].strftime('%Y%m%d_%H%M')}",
+                #                         "type": "BOS",
+                #                         "direction": "BULLISH",
+                #                         "broken_level": candle_5m["high"],
+                #                         "time": candle_5m["time"].isoformat()
+                #                     }
+                #                 ]
+                #             }
+                #             print(f"📡 Sending 5M BOS (BULLISH): {event_payload}")
+                #             if event_loop is not None:
+                #                 asyncio.run_coroutine_threadsafe(event_manager.broadcast(event_payload), event_loop)
 
-                        # CHOCH 5m
-                        if candle_5m["low"] < state.swing_low_5m:
-                            state.trend_5m = "BEARISH"
-                            state.swing_high_5m = state.candidate_high_5m
-                            state.pullback_count_5m = 0
-                            state.candidate_low_5m = candle_5m["low"]
-                            choch_5m_this_candle = True
-                            state.buffer_5m_sl.clear()
+                #         # CHOCH 5m
+                #         if candle_5m["low"] < state.swing_low_5m:
+                #             state.trend_5m = "BEARISH"
+                #             state.swing_high_5m = state.candidate_high_5m
+                #             state.pullback_count_5m = 0
+                #             state.candidate_low_5m = candle_5m["low"]
+                #             choch_5m_this_candle = True
+                #             state.buffer_5m_sl.clear()
 
-                            # 📡 Broadcast 5M CHOCH
-                            event_payload = {
-                                "symbol": "EURUSD",
-                                "timeframe": "5m",
-                                "events": [
-                                    {
-                                        "id": f"5m_CHOCH_{candle_5m['time'].strftime('%Y%m%d_%H%M')}",
-                                        "type": "CHOCH",
-                                        "broken_level": state.swing_low_5m,
-                                        "time": candle_5m["time"].isoformat()
-                                    }
-                                ]
-                            }
-                            print(f"📡 Sending 5M CHOCH (BEARISH): {event_payload}")
-                            if event_loop is not None:
-                                asyncio.run_coroutine_threadsafe(event_manager.broadcast(event_payload), event_loop)
+                #             # 📡 Broadcast 5M CHOCH
+                #             event_payload = {
+                #                 "symbol": "EURUSD",
+                #                 "timeframe": "5m",
+                #                 "events": [
+                #                     {
+                #                         "id": f"5m_CHOCH_{candle_5m['time'].strftime('%Y%m%d_%H%M')}",
+                #                         "type": "CHOCH",
+                #                         "broken_level": state.swing_low_5m,
+                #                         "time": candle_5m["time"].isoformat()
+                #                     }
+                #                 ]
+                #             }
+                #             print(f"📡 Sending 5M CHOCH (BEARISH): {event_payload}")
+                #             if event_loop is not None:
+                #                 asyncio.run_coroutine_threadsafe(event_manager.broadcast(event_payload), event_loop)
 
-                    # --------------------------------------------------
-                    # 5M POI TAP CHECK (Realtime)
-                    # --------------------------------------------------
-                    if state.mapped_pois and not state.poi_tapped and state.active_poi is None:
-                        for poi in state.mapped_pois:
-                            if poi.get("state") == "INVALIDATED":
-                                continue
+                #     # --------------------------------------------------
+                #     # 5M POI TAP CHECK (Realtime)
+                #     # --------------------------------------------------
+                #     if state.mapped_pois and not state.poi_tapped and state.active_poi is None:
+                #         for poi in state.mapped_pois:
+                #             if poi.get("state") == "INVALIDATED":
+                #                 continue
 
-                            poi_type = poi["type"]
-                            poi_trend = poi["trend"]
+                #             poi_type = poi["type"]
+                #             poi_trend = poi["trend"]
 
-                            if poi_trend == "BEARISH":
-                                if poi_type == "OB":
-                                    if candle_5m["high"] >= poi["price_low"] and candle_5m["low"] <= poi["price_high"]:
-                                        state.poi_tapped = True
-                                        state.active_poi = poi
-                                        state.poi_tapped_level = candle_5m["high"]
-                                        state.poi_tapped_time = candle_5m["time"]
-                                        break
+                #             if poi_trend == "BEARISH":
+                #                 if poi_type == "OB":
+                #                     if candle_5m["high"] >= poi["price_low"] and candle_5m["low"] <= poi["price_high"]:
+                #                         state.poi_tapped = True
+                #                         state.active_poi = poi
+                #                         state.poi_tapped_level = candle_5m["high"]
+                #                         state.poi_tapped_time = candle_5m["time"]
+                #                         break
 
-                                elif poi_type == "LIQ":
-                                    if candle_5m["high"] >= poi["price"]:
-                                        state.poi_tapped = True
-                                        state.active_poi = poi
-                                        state.poi_tapped_level = candle_5m["high"]
-                                        state.poi_tapped_time = candle_5m["time"]
-                                        break
-                    # POST POI TAP                
-                    if state.poi_tapped:
+                #                 elif poi_type == "LIQ":
+                #                     if candle_5m["high"] >= poi["price"]:
+                #                         state.poi_tapped = True
+                #                         state.active_poi = poi
+                #                         state.poi_tapped_level = candle_5m["high"]
+                #                         state.poi_tapped_time = candle_5m["time"]
+                #                         break
+                #     # POST POI TAP                
+                #     if state.poi_tapped:
 
-                        # --------------------------------------------------
-                        #  POI INVALIDATION (Realtime)
-                        # --------------------------------------------------
-                        poi_invalidated = False
+                #         # --------------------------------------------------
+                #         #  POI INVALIDATION (Realtime)
+                #         # --------------------------------------------------
+                #         poi_invalidated = False
 
-                        active_poi = state.active_poi
+                #         active_poi = state.active_poi
 
-                        # ⛔ Do NOT invalidate on tap candle
-                        if candle_5m["time"] > state.poi_tapped_time and state.active_poi:
+                #         # ⛔ Do NOT invalidate on tap candle
+                #         if candle_5m["time"] > state.poi_tapped_time and state.active_poi:
 
-                            active_poi = state.active_poi
-                            invalidation_level = None
+                #             active_poi = state.active_poi
+                #             invalidation_level = None
 
-                            # Find next POI (order-aware) if it exists
-                            next_poi = None
-                            for poi in state.mapped_pois:
-                                if poi is active_poi:
-                                    continue
-                                if poi.get("state") != "INVALIDATED":
-                                    next_poi = poi
-                                    break  # first non-invalidated POI after current active POI
+                #             # Find next POI (order-aware) if it exists
+                #             next_poi = None
+                #             for poi in state.mapped_pois:
+                #                 if poi is active_poi:
+                #                     continue
+                #                 if poi.get("state") != "INVALIDATED":
+                #                     next_poi = poi
+                #                     break  # first non-invalidated POI after current active POI
 
-                            p0_type = active_poi["type"]
-                            trend = state.trend_4h
+                #             p0_type = active_poi["type"]
+                #             trend = state.trend_4h
 
-                            # =========================
-                            # BEARISH TREND
-                            # =========================
-                            if trend == "BEARISH":
+                #             # =========================
+                #             # BEARISH TREND
+                #             # =========================
+                #             if trend == "BEARISH":
 
-                                if next_poi:
-                                    p1_type = next_poi["type"]
+                #                 if next_poi:
+                #                     p1_type = next_poi["type"]
 
-                                    if p0_type == "OB" and p1_type == "OB":
-                                        invalidation_level = (active_poi["price_low"] + next_poi["price_low"]) / 2
+                #                     if p0_type == "OB" and p1_type == "OB":
+                #                         invalidation_level = (active_poi["price_low"] + next_poi["price_low"]) / 2
 
-                                    elif p0_type == "OB" and p1_type == "LIQ":
-                                        invalidation_level = (active_poi["price_low"] + next_poi["price"]) / 2
+                #                     elif p0_type == "OB" and p1_type == "LIQ":
+                #                         invalidation_level = (active_poi["price_low"] + next_poi["price"]) / 2
 
-                                    elif p0_type == "LIQ" and p1_type == "LIQ":
-                                        invalidation_level = (active_poi["price"] + next_poi["price"]) / 2
+                #                     elif p0_type == "LIQ" and p1_type == "LIQ":
+                #                         invalidation_level = (active_poi["price"] + next_poi["price"]) / 2
 
-                                else:
-                                    # No next POI → fallback to 4H swing high
-                                    if p0_type == "OB":
-                                        invalidation_level = (active_poi["price_low"] + state.swing_high) / 2
-                                    else:
-                                        invalidation_level = (active_poi["price"] + state.swing_high) / 2
+                #                 else:
+                #                     # No next POI → fallback to 4H swing high
+                #                     if p0_type == "OB":
+                #                         invalidation_level = (active_poi["price_low"] + state.swing_high) / 2
+                #                     else:
+                #                         invalidation_level = (active_poi["price"] + state.swing_high) / 2
 
-                                if invalidation_level is not None and candle_5m["high"] > invalidation_level:
-                                    poi_invalidated = True
-                                    state.active_poi["state"] = "INVALIDATED"
+                #                 if invalidation_level is not None and candle_5m["high"] > invalidation_level:
+                #                     poi_invalidated = True
+                #                     state.active_poi["state"] = "INVALIDATED"
 
-                        # --------------------------------------------------
-                        # 🔥 APPLY INVALIDATION
-                        # --------------------------------------------------
-                        if poi_invalidated:
-                            print(f"❌ POI INVALIDATED @ {candle_5m['time']}")
+                #         # --------------------------------------------------
+                #         # 🔥 APPLY INVALIDATION
+                #         # --------------------------------------------------
+                #         if poi_invalidated:
+                #             print(f"❌ POI INVALIDATED @ {candle_5m['time']}")
 
-                            state.active_poi["state"] = "INVALIDATED"
+                #             state.active_poi["state"] = "INVALIDATED"
 
-                            state.active_poi = None
-                            state.poi_tapped = False
-                            state.poi_tapped_level = None
-                            state.poi_tapped_time = None
+                #             state.active_poi = None
+                #             state.poi_tapped = False
+                #             state.poi_tapped_level = None
+                #             state.poi_tapped_time = None
 
-                            state.protected_5m_point = None
-                            state.protected_5m_time = None
+                #             state.protected_5m_point = None
+                #             state.protected_5m_time = None
 
-                            continue
+                #             continue
 
 
-                        # --------------------------------------------------
-                        # TRADE SETUP (CHOCH + POI)
-                        # --------------------------------------------------
-                        if (
-                            choch_5m_this_candle
-                            and state.active_poi is not None
-                            and not poi_invalidated
-                            and not state.trade_planned
-                        ):
+                #         # --------------------------------------------------
+                #         # TRADE SETUP (CHOCH + POI)
+                #         # --------------------------------------------------
+                #         if (
+                #             choch_5m_this_candle
+                #             and state.active_poi is not None
+                #             and not poi_invalidated
+                #             and not state.trade_planned
+                #         ):
 
-                            # ==================================================
-                            # DETERMINE RANGE FOR 50% CALCULATION
-                            # ==================================================
-                            if state.trend_4h == "BEARISH":
-                                # 4H bearish → 5M CHOCH is bearish break
-                                range_low = candle_5m["low"]              # CHOCH candle low
-                                range_high = state.swing_high_5m           # last bullish swing high
-                                direction = "SELL"
-                            else:
-                                # 4H bullish → 5M CHOCH is bullish break
-                                range_high = candle_5m["high"]
-                                range_low = state.swing_low_5m
-                                direction = "BUY"
+                #             # ==================================================
+                #             # DETERMINE RANGE FOR 50% CALCULATION
+                #             # ==================================================
+                #             if state.trend_4h == "BEARISH":
+                #                 # 4H bearish → 5M CHOCH is bearish break
+                #                 range_low = candle_5m["low"]              # CHOCH candle low
+                #                 range_high = state.swing_high_5m           # last bullish swing high
+                #                 direction = "SELL"
+                #             else:
+                #                 # 4H bullish → 5M CHOCH is bullish break
+                #                 range_high = candle_5m["high"]
+                #                 range_low = state.swing_low_5m
+                #                 direction = "BUY"
 
-                            # Safety check
-                            if range_high is None or range_low is None:
-                                print("❌ Invalid range — trade skipped")
-                                continue
+                #             # Safety check
+                #             if range_high is None or range_low is None:
+                #                 print("❌ Invalid range — trade skipped")
+                #                 continue
 
-                            # ==================================================
-                            # 50% RETRACEMENT ENTRY
-                            # ==================================================
-                            entry = (range_high + range_low) / 2
+                #             # ==================================================
+                #             # 50% RETRACEMENT ENTRY
+                #             # ==================================================
+                #             entry = (range_high + range_low) / 2
 
-                            pip = 0.0001
+                #             pip = 0.0001
 
-                            if direction == "BUY":
-                                stop_loss = range_low - 4 * pip
-                                risk = entry - stop_loss
-                                take_profit = entry + 3 * risk
-                            else:
-                                stop_loss = range_high + 4 * pip
-                                risk = stop_loss - entry
-                                take_profit = entry - 3 * risk
+                #             if direction == "BUY":
+                #                 stop_loss = range_low - 4 * pip
+                #                 risk = entry - stop_loss
+                #                 take_profit = entry + 3 * risk
+                #             else:
+                #                 stop_loss = range_high + 4 * pip
+                #                 risk = stop_loss - entry
+                #                 take_profit = entry - 3 * risk
 
-                            # Risk validation
-                            if risk <= 0:
-                                print("❌ Invalid risk — trade skipped")
-                                continue
+                #             # Risk validation
+                #             if risk <= 0:
+                #                 print("❌ Invalid risk — trade skipped")
+                #                 continue
 
-                            # ==================================================
-                            # STORE TRADE IN STATE (FOR PLOTTING / EXECUTION)
-                            # ==================================================
-                            state.trade = {
-                                "direction": direction,
-                                "entry": float(entry),
-                                "sl": float(stop_loss),
-                                "tp": float(take_profit),
-                                "rr": 3.0,
+                #             # ==================================================
+                #             # STORE TRADE IN STATE (FOR PLOTTING / EXECUTION)
+                #             # ==================================================
+                #             state.trade = {
+                #                 "direction": direction,
+                #                 "entry": float(entry),
+                #                 "sl": float(stop_loss),
+                #                 "tp": float(take_profit),
+                #                 "rr": 3.0,
 
-                                # Context
-                                "htf_trend": state.trend_4h,
-                                "poi_type": state.active_poi["type"],
-                                "poi_price_low": state.active_poi.get("price_low"),
-                                "poi_price_high": state.active_poi.get("price_high"),
-                                "poi_time": state.poi_tapped_time,
+                #                 # Context
+                #                 "htf_trend": state.trend_4h,
+                #                 "poi_type": state.active_poi["type"],
+                #                 "poi_price_low": state.active_poi.get("price_low"),
+                #                 "poi_price_high": state.active_poi.get("price_high"),
+                #                 "poi_time": state.poi_tapped_time,
 
-                                "choch_time": candle_5m["time"],
-                                "range_high": float(range_high),
-                                "range_low": float(range_low),
+                #                 "choch_time": candle_5m["time"],
+                #                 "range_high": float(range_high),
+                #                 "range_low": float(range_low),
 
-                                # Lifecycle
-                                "planned_time": candle_5m["time"],
-                                "status": "PLANNED",
-                            }
+                #                 # Lifecycle
+                #                 "planned_time": candle_5m["time"],
+                #                 "status": "PLANNED",
+                #             }
 
-                            state.trade_planned = True
+                #             state.trade_planned = True
 
-                            # 📡 Broadcast 5M Retracement & Trade Plan
-                            ts_str = candle_5m['time'].strftime('%Y%m%d_%H%M')
-                            iso_start = candle_5m['time'].isoformat()
-                            iso_end = (candle_5m['time'] + pd.Timedelta(minutes=25)).isoformat()
+                #             # 📡 Broadcast 5M Retracement & Trade Plan
+                #             ts_str = candle_5m['time'].strftime('%Y%m%d_%H%M')
+                #             iso_start = candle_5m['time'].isoformat()
+                #             iso_end = (candle_5m['time'] + pd.Timedelta(minutes=25)).isoformat()
                             
-                            # Retracement payload
-                            retr_event = {
-                                "symbol": SYMBOL,
-                                "timeframe": "5m",
-                                "events": [
-                                    {
-                                        "id": f"5m_RETR_{ts_str}",
-                                        "type": "RETRACEMENT",
-                                        "start": float(range_low),
-                                        "end": float(range_high),
-                                        "mid": float(entry),
-                                        "time_start": iso_start,
-                                        "time_end": iso_end,
-                                        "extend_candles": 5
-                                    }
-                                ]
-                            }
+                #             # Retracement payload
+                #             retr_event = {
+                #                 "symbol": SYMBOL,
+                #                 "timeframe": "5m",
+                #                 "events": [
+                #                     {
+                #                         "id": f"5m_RETR_{ts_str}",
+                #                         "type": "RETRACEMENT",
+                #                         "start": float(range_low),
+                #                         "end": float(range_high),
+                #                         "mid": float(entry),
+                #                         "time_start": iso_start,
+                #                         "time_end": iso_end,
+                #                         "extend_candles": 5
+                #                     }
+                #                 ]
+                #             }
                             
-                            # Trade Plan payload
-                            plan_event = {
-                                "symbol": SYMBOL,
-                                "timeframe": "5m",
-                                "events": [
-                                    {
-                                        "id": f"5m_RETR_{ts_str}",
-                                        "type": "TRADE_PLAN",
-                                        "plan_direction": "LONG" if direction == "BUY" else "SHORT",
-                                        "SL": float(stop_loss),
-                                        "TP": float(take_profit),
-                                        "Entry": float(entry),
-                                        "time_start": iso_start,
-                                        "time_end": iso_end
-                                    }
-                                ]
-                            }
+                #             # Trade Plan payload
+                #             plan_event = {
+                #                 "symbol": SYMBOL,
+                #                 "timeframe": "5m",
+                #                 "events": [
+                #                     {
+                #                         "id": f"5m_RETR_{ts_str}",
+                #                         "type": "TRADE_PLAN",
+                #                         "plan_direction": "LONG" if direction == "BUY" else "SHORT",
+                #                         "SL": float(stop_loss),
+                #                         "TP": float(take_profit),
+                #                         "Entry": float(entry),
+                #                         "time_start": iso_start,
+                #                         "time_end": iso_end
+                #                     }
+                #                 ]
+                #             }
                             
-                            print(f"📡 Sending 5M Retracement & Trade Plan: {ts_str}")
-                            if event_loop is not None:
-                                asyncio.run_coroutine_threadsafe(event_manager.broadcast(retr_event), event_loop)
-                                asyncio.run_coroutine_threadsafe(event_manager.broadcast(plan_event), event_loop)
+                #             print(f"📡 Sending 5M Retracement & Trade Plan: {ts_str}")
+                #             if event_loop is not None:
+                #                 asyncio.run_coroutine_threadsafe(event_manager.broadcast(retr_event), event_loop)
+                #                 asyncio.run_coroutine_threadsafe(event_manager.broadcast(plan_event), event_loop)
 
-                            print("🚀 TRADE PLANNED & STORED")
-                            print(f"   Direction : {direction}")
-                            print(f"   Entry     : {entry}")
-                            print(f"   SL        : {stop_loss}")
-                            print(f"   TP        : {take_profit}")
+                #             print("🚀 TRADE PLANNED & STORED")
+                #             print(f"   Direction : {direction}")
+                #             print(f"   Entry     : {entry}")
+                #             print(f"   SL        : {stop_loss}")
+                #             print(f"   TP        : {take_profit}")
 
 
-                        # --------------------------------------------------
-                        # TRADE MANAGEMENT (SELL ONLY - Realtime 5M)
-                        # --------------------------------------------------
-                        if state.trade_planned and state.trade is not None:
+                #         # --------------------------------------------------
+                #         # TRADE MANAGEMENT (SELL ONLY - Realtime 5M)
+                #         # --------------------------------------------------
+                #         if state.trade_planned and state.trade is not None:
 
-                            trade = state.trade
+                #             trade = state.trade
 
-                            # Safety: only manage SELL trades here
-                            if trade["direction"] != "SELL":
-                                pass
-                            else:
-                                entry = trade["entry"]
-                                sl = trade["sl"]
-                                tp = trade["tp"]
+                #             # Safety: only manage SELL trades here
+                #             if trade["direction"] != "SELL":
+                #                 pass
+                #             else:
+                #                 entry = trade["entry"]
+                #                 sl = trade["sl"]
+                #                 tp = trade["tp"]
 
-                                candle_high = candle_5m["high"]
-                                candle_low = candle_5m["low"]
-                                candle_time = candle_5m["time"]
+                #                 candle_high = candle_5m["high"]
+                #                 candle_low = candle_5m["low"]
+                #                 candle_time = candle_5m["time"]
 
-                                # ==================================================
-                                # ENTRY NOT FILLED YET
-                                # ==================================================
-                                if not state.entry_filled:
+                #                 # ==================================================
+                #                 # ENTRY NOT FILLED YET
+                #                 # ==================================================
+                #                 if not state.entry_filled:
 
-                                    entry_filled_this_candle = False
+                #                     entry_filled_this_candle = False
 
-                                    # -----------------------------
-                                    # ENTRY CHECK FIRST
-                                    # -----------------------------
-                                    if candle_low <= entry <= candle_high:
-                                        entry_filled_this_candle = True
+                #                     # -----------------------------
+                #                     # ENTRY CHECK FIRST
+                #                     # -----------------------------
+                #                     if candle_low <= entry <= candle_high:
+                #                         entry_filled_this_candle = True
 
-                                    if entry_filled_this_candle:
-                                        state.entry_filled = True
-                                        trade["status"] = "OPEN"
-                                        trade["entry_time"] = candle_time
+                #                     if entry_filled_this_candle:
+                #                         state.entry_filled = True
+                #                         trade["status"] = "OPEN"
+                #                         trade["entry_time"] = candle_time
 
-                                        print(f"🔴 SELL ENTRY FILLED @ {entry} | {candle_time}")
+                #                         print(f"🔴 SELL ENTRY FILLED @ {entry} | {candle_time}")
 
-                                    else:
-                                        # --------------------------------------------------
-                                        # 2% TP MOVE WITHOUT ENTRY → INVALIDATE TRADE
-                                        # --------------------------------------------------
-                                        tp_2pct_level = entry - 0.02 * (entry - tp)
+                #                     else:
+                #                         # --------------------------------------------------
+                #                         # 2% TP MOVE WITHOUT ENTRY → INVALIDATE TRADE
+                #                         # --------------------------------------------------
+                #                         tp_2pct_level = entry - 0.02 * (entry - tp)
 
-                                        if candle_low <= tp_2pct_level:
-                                            print(
-                                                f"🟥 TP MOVE WITHOUT ENTRY (2% HIT @ {tp_2pct_level}) → TRADE INVALID"
-                                            )
+                #                         if candle_low <= tp_2pct_level:
+                #                             print(
+                #                                 f"🟥 TP MOVE WITHOUT ENTRY (2% HIT @ {tp_2pct_level}) → TRADE INVALID"
+                #                             )
 
-                                            # 🔥 RESET TRADE STATE
-                                            state.trade = None
-                                            state.trade_planned = False
-                                            state.entry_filled = False
+                #                             # 🔥 RESET TRADE STATE
+                #                             state.trade = None
+                #                             state.trade_planned = False
+                #                             state.entry_filled = False
 
-                                            continue
+                #                             continue
 
-                                # ==================================================
-                                # ENTRY FILLED → CHECK SL / TP
-                                # ==================================================
-                                else:
+                #                 # ==================================================
+                #                 # ENTRY FILLED → CHECK SL / TP
+                #                 # ==================================================
+                #                 else:
 
-                                    # -----------------------------
-                                    # STOP LOSS
-                                    # -----------------------------
-                                    if candle_high >= sl:
-                                        print(f"🟥 SELL SL HIT @ {sl}")
+                #                     # -----------------------------
+                #                     # STOP LOSS
+                #                     # -----------------------------
+                #                     if candle_high >= sl:
+                #                         print(f"🟥 SELL SL HIT @ {sl}")
 
-                                        trade["status"] = "SL"
-                                        trade["exit_time"] = candle_time
-                                        trade["exit_price"] = sl
+                #                         trade["status"] = "SL"
+                #                         trade["exit_time"] = candle_time
+                #                         trade["exit_price"] = sl
 
-                                        state.trade = None
-                                        state.trade_planned = False
-                                        state.entry_filled = False
+                #                         state.trade = None
+                #                         state.trade_planned = False
+                #                         state.entry_filled = False
 
-                                        continue
+                #                         continue
 
-                                    # -----------------------------
-                                    # TAKE PROFIT
-                                    # -----------------------------
-                                    elif candle_low <= tp:
-                                        print(f"🟩 SELL TP HIT @ {tp}")
+                #                     # -----------------------------
+                #                     # TAKE PROFIT
+                #                     # -----------------------------
+                #                     elif candle_low <= tp:
+                #                         print(f"🟩 SELL TP HIT @ {tp}")
 
-                                        trade["status"] = "TP"
-                                        trade["exit_time"] = candle_time
-                                        trade["exit_price"] = tp
+                #                         trade["status"] = "TP"
+                #                         trade["exit_time"] = candle_time
+                #                         trade["exit_price"] = tp
 
-                                        state.trade = None
-                                        state.trade_planned = False
-                                        state.entry_filled = False
+                #                         state.trade = None
+                #                         state.trade_planned = False
+                #                         state.entry_filled = False
 
-                                        continue
+                #                         continue
                                       
 
             except ValueError:

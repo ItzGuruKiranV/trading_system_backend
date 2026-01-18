@@ -9,7 +9,7 @@ router = APIRouter()
 # EVENTS WEBSOCKET ENDPOINT
 # =========================
 
-@router.websocket("/ws/events")
+@router.websocket("/ws/market")
 async def events_ws(websocket: WebSocket):
     await event_manager.connect(websocket)
     print("🔌 Event WebSocket connected")
