@@ -2,6 +2,7 @@ from datetime import datetime
 from pathlib import Path
 import csv
 import pandas as pd
+import time
 
 import asyncio
 from ws.manager import ws_manager
@@ -24,13 +25,11 @@ class Candle:
         self.low = low
         self.close = close
 
-MAX_CANDLES_PER_SECOND = 10000
-MIN_INTERVAL = 0.001 
 # ==================================================
 # CONFIG
 # ==================================================
 MINUTE_CSV_PATH = Path(
-    r"D:\Trading Project\trading_system_backend\HISTDATA_COM_MT_EURUSD_M12022\DAT_MT_EURUSD_M1_2022.csv"
+    r"C:\Gurukiran\projects\trading_system\trading_system_backend\HISTDATA_COM_MT_EURUSD_M12022\DAT_MT_EURUSD_M1_2022.csv"
 )
 
 # Buffers
@@ -53,8 +52,7 @@ state.min_pullback_candles = 10
 # ==================================================
 # SEED / BOOTSTRAP (HISTORICAL CONTEXT)
 # ==================================================
-# 🔥 This is MANUAL / OFFLINE / HISTORICAL
-# No seed logic runs in realtime
+
 
 state.trend_4h = "BEARISH"
 
@@ -89,22 +87,15 @@ def reset_on_4h_structure(state):
     state.trend_5m = None
 
     state.swing_high_5m = None
-    state.swing_high_5m_time = None
     state.swing_low_5m = None
-    state.swing_low_5m_time = None
-
     state.candidate_high_5m = None
     state.candidate_low_5m = None
     state.pullback_count_5m = 0
+    state.market_trend_5m = None
+    state.choch_5m = False
 
     state.buffer_5m_sh.clear()
     state.buffer_5m_sl.clear()
-
-    # -----------------------------
-    # 5M protected point
-    # -----------------------------
-    state.protected_5m_point = None
-    state.protected_5m_time = None
 
     # -----------------------------
     # Clear 4H → 5M mapping buffers
@@ -121,7 +112,6 @@ def reset_on_4h_structure(state):
 # ==================================================
 def main():
     # wait until FastAPI sets event_loop
-    import time
     while event_loop is None:
         time.sleep(0.05)
 
@@ -137,7 +127,6 @@ def main():
                 continue
 
             date_str, time_str, o, h, l, c = row[:6]
-            time.sleep(MIN_INTERVAL)
             try:
                 t = datetime.strptime(date_str + " " + time_str, "%Y.%m.%d %H:%M")
                 candle_1m = Candle(
@@ -223,7 +212,6 @@ def main():
 
                     if state.trend_4h == "BULLISH":
                         if state.candidate_high is None or candle_4h["high"] > state.candidate_high:
-                            old_h = state.candidate_high
                             state.candidate_high = candle_4h["high"]
                             state.bearish_count = 0
 
@@ -238,7 +226,6 @@ def main():
                                 state.pullback_time = candle_4h["time"]
                                 print(f"\n🌊 [4H BULLISH PB] CONFIRMED @ {state.pullback_time}")
                                 print(f"   | Reason: {'Count (' + str(state.bearish_count) + ')' if state.bearish_count >= state.min_pullback_candles else 'Depth (' + f'{depth_ratio:.2f}' + ')'}")
-                                print(f"   | Swing High Set: {state.candidate_high}")
                                 state.h4_structure_event=None
                                 state.swing_high = state.candidate_high
 
@@ -275,84 +262,57 @@ def main():
                                     trend=state.trend_4h
                                 )
                                 print(f"🔍 DETECTED {len(state.active_pois)} POIs in swing leg")
-                                # Deduplicate POIs
-                                seen = set()
-                                unique_pois = []
-                                for poi in state.active_pois:
-                                    key = (poi["time"], poi.get("price_low"), poi.get("price_high"), poi["type"], poi["if_valid"])
-                                    if key not in seen:
-                                        seen.add(key)
-                                        unique_pois.append(poi)
+                               
 
-                                # 📡 Broadcast POIs
-                                if unique_pois:
-                                    liq_events = []
-                                    ob_events = []
-                                    for p in unique_pois:
-                                        if p.get('time') is None or not hasattr(p['time'], 'strftime'):
-                                            continue
-                                        ts_str = p['time'].strftime('%Y%m%d_%H%M')
-                                        iso_time = p['time'].isoformat()
-                                        if p['type'] == 'LIQ':
-                                            liq_events.append({
-                                                "id": f"4H_POI_LIQ_{ts_str}",
-                                                "type": "POI-LIQ",
-                                                "price": p['price_low'] if p['price_low'] is not None else p['price_high'],
-                                                "time": iso_time,
-                                                "if_valid": True
-                                            })
-                                        elif p['type'] == 'OB':
-                                            ob_events.append({
-                                                "id": f"4H_POI_OB_{ts_str}",
-                                                "type": "POI-OB",
-                                                "time_start": iso_time,
-                                                "time_end": (p['time'] + pd.Timedelta(hours=4)).isoformat(),
-                                                "low": p['price_low'],
-                                                "high": p['price_high'],
-                                                "if_valid": True
-                                            })
+                                liq_events = []
+                                ob_events = []
 
-                                    if liq_events:
-                                        payload = {"symbol": "EURUSD", "timeframe": "4H", "events": liq_events}
-                                        print(f"📡 Sending 4H LIQ POIs: {len(liq_events)} events")
-                                        if event_loop is not None:
-                                            asyncio.run_coroutine_threadsafe(event_manager.broadcast(payload), event_loop)
-                                    
-                                    if ob_events:
-                                        payload = {"symbol": "EURUSD", "timeframe": "4h", "events": ob_events}
-                                        print(f"📡 Sending 4H OB POIs: {len(ob_events)} events")
-                                        print("order block events " , ob_events)
-                                        if event_loop is not None:
-                                            asyncio.run_coroutine_threadsafe(event_manager.broadcast(payload), event_loop)
+                                for p in state.active_pois:
+                                    if p.get('time') is None or not hasattr(p['time'], 'strftime'):
+                                        continue
 
+                                    ts_str = p['time'].strftime('%Y%m%d_%H%M')
+                                    iso_time = p['time'].isoformat()
+
+                                    if p['type'] == 'LIQ':
+                                        liq_events.append({
+                                            "id": f"4H_POI_LIQ_{ts_str}",
+                                            "type": "POI-LIQ",
+                                            "price": p['price_low'] if p['price_low'] is not None else p['price_high'],
+                                            "time": iso_time,
+                                            "if_valid": True
+                                        })
+
+                                    elif p['type'] == 'OB':
+                                        ob_events.append({
+                                            "id": f"4H_POI_OB_{ts_str}",
+                                            "type": "POI-OB",
+                                            "time_start": iso_time,
+                                            "time_end": (p['time'] + pd.Timedelta(hours=4)).isoformat(),
+                                            "low": p['price_low'],
+                                            "high": p['price_high'],
+                                            "if_valid": True
+                                        })
+
+                                if liq_events and event_loop is not None:
+                                    payload = {"symbol": "EURUSD", "timeframe": "4H", "events": liq_events}
+                                    asyncio.run_coroutine_threadsafe(event_manager.broadcast(payload), event_loop)
+
+                                if ob_events and event_loop is not None:
+                                    payload = {"symbol": "EURUSD", "timeframe": "4H", "events": ob_events}
+                                    asyncio.run_coroutine_threadsafe(event_manager.broadcast(payload), event_loop)
+                                
                                 mapped_pois = []
 
-                                # Map POIs to 5M candles in leg_buffer_4h
-                                for poi in unique_pois:
-                                    nearest_candle = None
-                                    for c in buffer_5m_poi:
-                                        if c["time"] <= poi["time"]:
-                                            nearest_candle = c
-                                        else:
-                                            break
-                                    if nearest_candle is None:
-                                        if not buffer_5m_poi:
-                                            print("⚠️ Warning: buffer_5m_poi is empty! Skipping POI mapping.")
-                                            continue
-                                        nearest_candle = buffer_5m_poi[0]
-
-                                    start_time = nearest_candle["time"]
-                                    end_time = start_time + pd.Timedelta(hours=4)
-                                    if end_time > buffer_5m_poi[-1]["time"]:
-                                        end_time = buffer_5m_poi[-1]["time"]
+                                for poi in state.active_pois:
+                                    start_time = poi["time"]
+                                    end_time = start_time + pd.Timedelta(hours=4) - pd.Timedelta(minutes=1)
 
                                     mapped = {
                                         "type": poi["type"],
                                         "trend": poi["trend"],
                                         "start_time": start_time,
                                         "end_time": end_time,
-                                        "leg_start_5m": leg_buffer_4h[0]["time"],
-                                        "leg_end_5m": leg_buffer_4h[-1]["time"], 
                                         "if_valid": True
                                     }
 
@@ -361,6 +321,7 @@ def main():
                                             "price_low": poi["price_low"],
                                             "price_high": poi["price_high"],
                                         })
+
                                     elif poi["type"] == "LIQ":
                                         mapped.update({
                                             "price": poi["price_low"] if poi["price_low"] is not None else poi["price_high"]
@@ -472,7 +433,6 @@ def main():
                                 state.pullback_time = candle_4h["time"]
                                 print(f"\n🌊 [4H BEARISH PB] CONFIRMED @ {state.pullback_time}")
                                 print(f"   | Reason: {'Count (' + str(state.bullish_count) + ')' if state.bullish_count >= state.min_pullback_candles else 'Depth (' + f'{depth_ratio:.2f}' + ')'}")
-                                print(f"   | Swing Low Set: {state.candidate_low}")
                                 state.h4_structure_event=None
                                 state.swing_low = state.candidate_low
                                 state.bullish_count = 0
@@ -501,99 +461,105 @@ def main():
                                         )
 
                                 swing_df = pd.DataFrame(leg_buffer_4h).set_index("time")
+                                # ---------------------------------------------------------
+                                # 1️⃣ Detect POIs from BEARISH 4H swing
+                                # ---------------------------------------------------------
                                 state.active_pois = detect_pois_from_swing(
                                     ohlc_df=swing_df,
-                                    trend=state.trend_4h
+                                    trend="BEARISH"   # explicit bearish context
                                 )
-                                print(f"🔍 DETECTED {len(state.active_pois)} POIs in swing leg")
 
-                                # Deduplicate POIs
-                                seen = set()
-                                unique_pois = []
-                                for poi in state.active_pois:
-                                    key = (poi["time"], poi.get("price_low"), poi.get("price_high"), poi["type"], poi["if_valid"])
-                                    if key not in seen:
-                                        seen.add(key)
-                                        unique_pois.append(poi)
+                                print(f"🔍 DETECTED {len(state.active_pois)} POIs in BEARISH 4H swing leg")
 
-                                # 📡 Broadcast POIs
-                                if unique_pois:
-                                    liq_events = []
-                                    ob_events = []
-                                    for p in unique_pois:
-                                        if p.get('time') is None or not hasattr(p['time'], 'strftime'):
-                                            continue
-                                        ts_str = p['time'].strftime('%Y%m%d_%H%M')
-                                        iso_time = p['time'].isoformat()
-                                        if p['type'] == 'LIQ':
-                                            liq_events.append({
-                                                "id": f"4H_POI_LIQ_{ts_str}",
-                                                "type": "POI-LIQ",
-                                                "price": p['price_low'] if p['price_low'] is not None else p['price_high'],
-                                                "time": iso_time,
-                                                "if_valid": True
-                                            })
-                                        elif p['type'] == 'OB':
-                                            ob_events.append({
-                                                "id": f"4H_POI_OB_{ts_str}",
-                                                "type": "POI-OB",
-                                                "time_start": iso_time,
-                                                "time_end": (p['time'] + pd.Timedelta(hours=4)).isoformat(),
-                                                "low": p['price_low'],
-                                                "high": p['price_high'],
-                                                "if_valid": True
-                                            })
+                                # ---------------------------------------------------------
+                                # 2️⃣ Broadcast POIs to frontend (NO dedup, POIs already sorted)
+                                # ---------------------------------------------------------
+                                liq_events = []
+                                ob_events = []
 
-                                    if liq_events:
-                                        payload = {"symbol": "EURUSD", "timeframe": "4H", "events": liq_events}
-                                        print(f"📡 Sending 4H LIQ POIs: {len(liq_events)} events")
-                                        if event_loop is not None:
-                                            asyncio.run_coroutine_threadsafe(event_manager.broadcast(payload), event_loop)
-                                    
-                                    if ob_events:
-                                        payload = {"symbol": "EURUSD", "timeframe": "4h", "events": ob_events}
-                                        print(f"📡 Sending 4H OB POIs: {len(ob_events)} events")
-                                        if event_loop is not None:
-                                            asyncio.run_coroutine_threadsafe(event_manager.broadcast(payload), event_loop)
+                                for p in state.active_pois:
+                                    if p.get("time") is None or not hasattr(p["time"], "strftime"):
+                                        continue
 
+                                    ts_str = p["time"].strftime("%Y%m%d_%H%M")
+                                    iso_time = p["time"].isoformat()
+
+                                    # 🔻 BEARISH LIQ → usually buyside liquidity above highs
+                                    if p["type"] == "LIQ":
+                                        liq_events.append({
+                                            "id": f"4H_POI_LIQ_{ts_str}",
+                                            "type": "POI-LIQ",
+                                            "price": p["price_high"] if p["price_high"] is not None else p["price_low"],
+                                            "time": iso_time,
+                                            "trend": "BEARISH",
+                                            "if_valid": True
+                                        })
+
+                                    # 🔻 BEARISH OB → supply zone
+                                    elif p["type"] == "OB":
+                                        ob_events.append({
+                                            "id": f"4H_POI_OB_{ts_str}",
+                                            "type": "POI-OB",
+                                            "time_start": iso_time,
+                                            "time_end": (p["time"] + pd.Timedelta(hours=4)).isoformat(),
+                                            "low": p["price_low"],
+                                            "high": p["price_high"],
+                                            "trend": "BEARISH",
+                                            "if_valid": True
+                                        })
+
+                                # 📡 Send to frontend
+                                if liq_events and event_loop is not None:
+                                    payload = {
+                                        "symbol": "EURUSD",
+                                        "timeframe": "4H",
+                                        "events": liq_events
+                                    }
+                                    asyncio.run_coroutine_threadsafe(
+                                        event_manager.broadcast(payload),
+                                        event_loop
+                                    )
+
+                                if ob_events and event_loop is not None:
+                                    payload = {
+                                        "symbol": "EURUSD",
+                                        "timeframe": "4H",
+                                        "events": ob_events
+                                    }
+                                    asyncio.run_coroutine_threadsafe(
+                                        event_manager.broadcast(payload),
+                                        event_loop
+                                    )
+
+                                # ---------------------------------------------------------
+                                # 3️⃣ Convert 4H POIs → MINUTE TIMEFRAME (execution-ready)
+                                # ---------------------------------------------------------
                                 mapped_pois = []
 
-                                for poi in unique_pois:
-                                    nearest_candle = None
-                                    for c in buffer_5m_poi:
-                                        if c["time"] <= poi["time"]:
-                                            nearest_candle = c
-                                        else:
-                                            break
-                                    if nearest_candle is None:
-                                        if not buffer_5m_poi:
-                                            print("⚠️ Warning: buffer_5m_poi is empty! Skipping POI mapping.")
-                                            continue
-                                        nearest_candle = buffer_5m_poi[0]
-
-                                    start_time = nearest_candle["time"]
-                                    end_time = start_time + pd.Timedelta(hours=4)
-                                    if end_time > buffer_5m_poi[-1]["time"]:
-                                        end_time = buffer_5m_poi[-1]["time"]
+                                for poi in state.active_pois:
+                                    start_time = poi["time"]
+                                    end_time = start_time + pd.Timedelta(hours=4) - pd.Timedelta(minutes=1)
 
                                     mapped = {
                                         "type": poi["type"],
-                                        "trend": poi["trend"],
+                                        "trend": "BEARISH",
+                                        "source_tf": "4H",
                                         "start_time": start_time,
                                         "end_time": end_time,
-                                        "leg_start_5m": leg_buffer_4h[0]["time"],
-                                        "leg_end_5m": leg_buffer_4h[-1]["time"],
-                                        "if_valid": True,
+                                        "if_valid": True
                                     }
 
+                                    # 🔻 Supply OB mapping
                                     if poi["type"] == "OB":
                                         mapped.update({
                                             "price_low": poi["price_low"],
-                                            "price_high": poi["price_high"],
+                                            "price_high": poi["price_high"]
                                         })
+
+                                    # 🔻 Liquidity mapping
                                     elif poi["type"] == "LIQ":
                                         mapped.update({
-                                            "price": poi["price_low"] if poi["price_low"] is not None else poi["price_high"]
+                                            "price": poi["price_high"] if poi["price_high"] is not None else poi["price_low"]
                                         })
 
                                     mapped_pois.append(mapped)
@@ -707,7 +673,7 @@ def main():
                         if bull_candle_5m and (state.pullback_count_5m == 0 or state.pullback_count_5m == 1):
                             state.pullback_count_5m += 1
 
-                        if candle_5m["low"] < state.candidate_low_5m:
+                        if candle_5m["low"] < state.candidate_low_5m and state.pullback_count_5m<2:
                             state.candidate_low_5m = candle_5m["low"]
                             state.pullback_count_5m = 0
 
@@ -744,7 +710,7 @@ def main():
                         if bear_candle_5m and (state.pullback_count_5m == 0 or state.pullback_count_5m == 1):
                             state.pullback_count_5m += 1
 
-                        if candle_5m["high"] > state.candidate_high_5m:
+                        if candle_5m["high"] > state.candidate_high_5m and state.pullback_count_5m<2:
                             state.candidate_high_5m = candle_5m["high"]
                             state.pullback_count_5m = 0
 
@@ -1085,44 +1051,33 @@ def main():
 
                                         continue
 
-                if state.trend_4h == "BEARISH":
 
-                    # ==================================================
-                    # INITIALIZE 5M TREND
-                    # ==================================================
+                if state.trend_4h == "BEARISH":
+                    # MIRRORED VERSION OF BULLISH LOGIC
                     if state.candidate_high_5m is None:
                         state.market_trend_5m = "BULLISH"
                         state.candidate_high_5m = candle_5m["high"]
                         state.pullback_count_5m = 0
-
                         if state.swing_low_5m is None:
                             state.swing_low_5m = candle_5m["low"]
                             state.swing_low_5m_time = candle_5m["time"]
                         continue
 
-                    # ==================================================
-                    # 5M BULLISH PULLBACK (IN BEARISH 4H)
-                    # ==================================================
                     if state.market_trend_5m == "BULLISH":
-
-                        if bear_candle_5m and (state.pullback_count_5m in (0, 1)):
+                        if bear_candle_5m and (state.pullback_count_5m == 0 or state.pullback_count_5m == 1):
                             state.pullback_count_5m += 1
 
-                        if candle_5m["high"] > state.candidate_high_5m:
+                        if candle_5m["high"] > state.candidate_high_5m and state.pullback_count_5m < 2:
                             state.candidate_high_5m = candle_5m["high"]
                             state.pullback_count_5m = 0
 
-                        retrace = (state.candidate_high_5m - candle_5m["low"]) / max(
-                            state.candidate_high_5m - state.swing_low_5m, 1e-9
-                        )
-
+                        retrace = (state.candidate_high_5m - candle_5m["low"]) / max(state.candidate_high_5m - state.swing_low_5m, 1e-9)
                         valid_pullback_5m = state.pullback_count_5m >= 2 or retrace >= 0.75
+
                         if valid_pullback_5m:
                             state.buffer_5m_sl.append(candle_5m)
-
-                            # ---------------- BOS 5M ----------------
+                            # BOS 5m (BEARISH VERSION)
                             if candle_5m["high"] > state.candidate_high_5m:
-
                                 swing_candle = min(
                                     state.buffer_5m_sl,
                                     key=lambda c: c["low"]
@@ -1137,40 +1092,31 @@ def main():
                                 state.pullback_count_5m = 0
                                 state.buffer_5m_sl.clear()
 
-                                # ---------------- CHOCH 5M ----------------
+                                # CHOCH 5m (BEARISH VERSION)
                                 if candle_5m["low"] < state.swing_low_5m:
                                     state.swing_high_5m = state.candidate_high_5m
-                                    state.market_trend_5m= "BEARISH"
+                                    state.market_trend_5m = "BEARISH"
                                     state.pullback_count_5m = 0
                                     state.candidate_low_5m = candle_5m["low"]
-
                                     print(f"🚀 5M BEARISH CHOCH @ {candle_5m['time']} | Broken Low: {state.swing_low_5m}")
                                     state.buffer_5m_sl.clear()
 
-                    # ==================================================
-                    # 5M BEARISH CONTINUATION
-                    # ==================================================
                     if state.market_trend_5m == "BEARISH":
-
-                        if bull_candle_5m and (state.pullback_count_5m in (0, 1)):
+                        if bull_candle_5m and (state.pullback_count_5m == 0 or state.pullback_count_5m == 1):
                             state.pullback_count_5m += 1
 
-                        if candle_5m["low"] < state.candidate_low_5m:
+                        if candle_5m["low"] < state.candidate_low_5m and state.pullback_count_5m < 2:
                             state.candidate_low_5m = candle_5m["low"]
                             state.pullback_count_5m = 0
 
-                        retrace = (candle_5m["high"] - state.candidate_low_5m) / max(
-                            state.swing_high_5m - state.candidate_low_5m, 1e-9
-                        )
-
+                        retrace = (candle_5m["high"] - state.candidate_low_5m) / max(state.swing_high_5m - state.candidate_low_5m, 1e-9)
                         valid_pullback_5m = state.pullback_count_5m >= 2 or retrace >= 0.99
+                        print(f"   5M Pullback Check: Count={state.pullback_count_5m}, Retrace={retrace:.2f}, Valid={valid_pullback_5m}")
 
                         if valid_pullback_5m:
                             state.buffer_5m_sh.append(candle_5m)
-
-                            # ---------------- BOS 5M ----------------
+                            # BOS 5m (BEARISH VERSION)
                             if candle_5m["low"] < state.candidate_low_5m:
-
                                 swing_candle = max(
                                     state.buffer_5m_sh,
                                     key=lambda c: c["high"]
@@ -1185,97 +1131,95 @@ def main():
                                 state.pullback_count_5m = 0
                                 state.buffer_5m_sh.clear()
 
-                                # ---------------- CHOCH 5M ----------------
+                                # CHOCH 5m (BEARISH VERSION)
                                 if candle_5m["high"] > state.swing_high_5m:
                                     state.swing_low_5m = state.candidate_low_5m
-                                    state.market_trend_5m= "BULLISH"
-
+                                    state.market_trend_5m = "BULLISH"
                                     state.pullback_count_5m = 0
                                     state.candidate_high_5m = candle_5m["high"]
-
                                     print(f"🚀 5M BULLISH CHOCH @ {candle_5m['time']} | Broken High: {state.swing_high_5m}")
                                     state.buffer_5m_sh.clear()
 
-
-                                    # --------------------------------------------------
-                                    # 5M POI TAP CHECK (Realtime)
-                                    # --------------------------------------------------
+                    # --------------------------------------------------
+                    # 5M POI TAP CHECK (MIRRORED FOR BEARISH)
+                    # --------------------------------------------------
                     if state.mapped_pois and not state.poi_tapped and state.active_poi is None:
+                        for poi in state.mapped_pois:
+                            if not poi["if_valid"]:
+                                continue
 
-                                    for poi in state.mapped_pois:
-                                        if not poi["if_valid"]:
-                                            continue
+                            if poi["type"] == "OB":
+                                # MIRRORED: For BEARISH trend, check if price touches OB from above
+                                if candle_5m["high"] >= poi["price_low"] and candle_5m["low"] <= poi["price_high"]:
+                                    state.poi_tapped = True
+                                    state.active_poi = poi
+                                    state.poi_tapped_level = candle_5m["high"]  # MIRRORED: Use high instead of low
+                                    state.poi_tapped_time = candle_5m["time"]
+                                    print(f"🎯 POI TAPPED (OB) @ {candle_5m['time']}")
+                                    poi["if_valid"] = False
+                                    break
 
-                                        if poi["type"] == "OB":
-                                            if candle_5m["low"] <= poi["price_high"] and candle_5m["high"] >= poi["price_low"]:
-                                                state.poi_tapped = True
-                                                state.active_poi = poi
-                                                state.poi_tapped_level = candle_5m["low"]
-                                                state.poi_tapped_time = candle_5m["time"]
-                                                print(f"🎯 POI TAPPED (OB) @ {candle_5m['time']}")
-                                                poi["if_valid"]=False
-                                                break
+                            elif poi["type"] == "LIQ":
+                                # MIRRORED: For BEARISH trend, check if price sweeps LIQ from above
+                                if candle_5m["high"] >= poi["price"]:
+                                    state.poi_tapped = True
+                                    state.active_poi = poi
+                                    state.poi_tapped_level = candle_5m["high"]  # MIRRORED: Use high instead of low
+                                    state.poi_tapped_time = candle_5m["time"]
+                                    print(f"🎯 POI TAPPED (LIQ) @ {candle_5m['time']}")
+                                    poi["if_valid"] = False
+                                    break
 
-                                        elif poi["type"] == "LIQ":
-                                            if candle_5m["low"] <= poi["price"]:
-                                                state.poi_tapped = True
-                                                state.active_poi = poi
-                                                state.poi_tapped_level = candle_5m["low"]
-                                                state.poi_tapped_time = candle_5m["time"]
-                                                print(f"🎯 POI TAPPED (LIQ) @ {candle_5m['time']}")
-                                                poi["if_valid"]=False
-                                                break
+                        if state.poi_tapped:
+                            active_poi = state.active_poi
 
+                            next_poi = None
+                            for poi in state.mapped_pois:
+                                if not poi["if_valid"]:
+                                    continue
+                                else:
+                                    next_poi = poi
+                                    break
 
-                                    if state.poi_tapped:
-                                        active_poi = state.active_poi
+                            p0_type = active_poi["type"]
 
+                            if next_poi:
+                                p1_type = next_poi["type"]
 
-                                        next_poi = None
-                                        for poi in state.mapped_pois:
-                                                if not poi["if_valid"]:
-                                                    continue
-                                                else:
-                                                    next_poi = poi
-                                                    break  
+                                # MIRRORED: For BEARISH, check lows instead of highs
+                                if p0_type == "OB" and p1_type == "OB":
+                                    invalidation_level = (active_poi["price_low"] + next_poi["price_low"]) / 2
 
-                                        p0_type = active_poi["type"]
+                                elif p0_type == "OB" and p1_type == "LIQ":
+                                    invalidation_level = (active_poi["price_low"] + next_poi["price"]) / 2
 
-                                        
-                                        if next_poi:
-                                            p1_type = next_poi["type"]
+                                elif p0_type == "LIQ" and p1_type == "LIQ":
+                                    invalidation_level = (active_poi["price"] + next_poi["price"]) / 2
+                                elif p0_type == "LIQ" and p1_type == "OB":
+                                    invalidation_level = (active_poi["price"] + next_poi["price_low"]) / 2
 
-                                            if p0_type == "OB" and p1_type == "OB":
-                                                invalidation_level = (active_poi["price_high"] + next_poi["price_high"]) / 2
+                            else:
+                                # MIRRORED: Fallback to 4H swing high for BEARISH
+                                if p0_type == "OB":
+                                    invalidation_level = (active_poi["price_low"] + state.swing_high) / 2
+                                else:
+                                    invalidation_level = (active_poi["price"] + state.swing_high) / 2
 
-                                            elif p0_type == "OB" and p1_type == "LIQ":
-                                                invalidation_level = (active_poi["price_high"] + next_poi["price"]) / 2
-
-                                            elif p0_type == "LIQ" and p1_type == "LIQ":
-                                                invalidation_level = (active_poi["price"] + next_poi["price"]) / 2
-                                            elif p0_type=="LIQ" and p1_type=="OB":
-                                                invalidation_level = (active_poi["price"] + next_poi["price_high"]) / 2
-                                                
-
-                                        else:
-                                            # No next POI → fallback to 4H swing low
-                                            if p0_type == "OB":
-                                                invalidation_level = (active_poi["price_high"] + state.swing_low) / 2
-                                            else:
-                                                invalidation_level = (active_poi["price"] + state.swing_low) / 2
-                                    
-
-                    if not state.choch_5m and state.active_poi :
-                        if candle_5m["low"]<= invalidation_level:
-                            state.active_poi=None
-                            state.poi_tapped=False
+                    if not state.choch_5m and state.active_poi:
+                        # MIRRORED: Check if price goes above invalidation level
+                        if candle_5m["high"] >= invalidation_level:
+                            state.active_poi = None
+                            state.poi_tapped = False
                             continue
-                        if candle_5m["high"] > state.swing_high_5m :
-                            state.choch_5m=True
-                            state.trade_active 
-                            state.active_poi=None
-                            state.poi_tapped=False
-                            # 📡 Broadcast 5M CHOCH
+                        
+                        # MIRRORED: For BEARISH, check BEARISH CHOCH (price breaks below swing_low)
+                        if candle_5m["low"] < state.swing_low_5m:
+                            state.choch_5m = True
+                            state.trade_active = True
+                            state.active_poi = None
+                            state.poi_tapped = False
+                            
+                            # 📡 Broadcast 5M CHOCH (BEARISH VERSION)
                             event_payload = {
                                 "symbol": "EURUSD",
                                 "timeframe": "5m",
@@ -1283,29 +1227,30 @@ def main():
                                     {
                                         "id": f"5m_CHOCH_{candle_5m['time'].strftime('%Y%m%d_%H%M')}",
                                         "type": "CHOCH",
-                                        "broken_level": state.swing_high_5m,
+                                        "broken_level": state.swing_low_5m,  # MIRRORED: Use low instead of high
+                                        "direction": "BEARISH",
                                         "time": candle_5m["time"].isoformat()
                                     }
                                 ]
                             }
-                            print(f"📡 Sending 5M CHOCH (BULLISH): {event_payload}")
+                            print(f"📡 Sending 5M CHOCH (BEARISH): {event_payload}")
                             if event_loop is not None:
                                 asyncio.run_coroutine_threadsafe(event_manager.broadcast(event_payload), event_loop)
+
                         # --------------------------------------------------
-                        # TRADE SETUP (CHOCH + POI)
+                        # TRADE SETUP (CHOCH + POI) - MIRRORED FOR BEARISH
                         # --------------------------------------------------
-                        if (
-                            state.choch_5m
-                        ):
-                            state.choch_5m=False            
+                        if state.choch_5m:
+                            state.choch_5m = False
+            
                             # ==================================================
-                            # DETERMINE RANGE FOR 50% CALCULATION
+                            # DETERMINE RANGE FOR 50% CALCULATION - MIRRORED
                             # ==================================================
-                            if state.trend_4h == "BULLISH":
-                                # 4H bullish → 5M CHOCH is bullish break
-                                range_high = state.swing_high_5m          # CHOCH candle high
-                                range_low = state.swing_low_5m            # last bearish swing low
-                                direction = "BUY"
+                            if state.trend_4h == "BEARISH":  # CHANGED TO BEARISH
+                                # 4H bearish → 5M CHOCH is bearish break
+                                range_high = state.swing_high_5m  # Last bullish swing high
+                                range_low = state.swing_low_5m    # CHOCH candle low
+                                direction = "SELL"  # MIRRORED: SELL instead of BUY
 
                             # Safety check
                             if range_high is None or range_low is None:
@@ -1313,16 +1258,16 @@ def main():
                                 continue
 
                             # ==================================================
-                            # 50% RETRACEMENT ENTRY
+                            # 50% RETRACEMENT ENTRY - MIRRORED FOR SELL
                             # ==================================================
                             entry = (range_high + range_low) / 2
 
                             pip = 0.0001
 
-                            if direction == "BUY":
-                                stop_loss = range_low - 4 * pip
-                                risk = entry - stop_loss
-                                take_profit = entry + 3 * risk
+                            if direction == "SELL":  # MIRRORED
+                                stop_loss = range_high + 4 * pip  # MIRRORED: Above range
+                                risk = stop_loss - entry  # MIRRORED: Risk calculation
+                                take_profit = entry - 3 * risk  # MIRRORED: Downwards target
 
                             # Risk validation
                             if risk <= 0:
@@ -1380,7 +1325,7 @@ def main():
                                 ]
                             }
                             
-                            # Trade Plan payload
+                            # Trade Plan payload - MIRRORED FOR SELL
                             plan_event = {
                                 "symbol": SYMBOL,
                                 "timeframe": "5m",
@@ -1388,7 +1333,7 @@ def main():
                                     {
                                         "id": f"5m_RETR_{ts_str}",
                                         "type": "TRADE_PLAN",
-                                        "plan_direction": "LONG" if direction == "BUY" else "SHORT",
+                                        "plan_direction": "SHORT",  # MIRRORED: SHORT instead of LONG
                                         "SL": float(stop_loss),
                                         "TP": float(take_profit),
                                         "Entry": float(entry),
@@ -1408,101 +1353,95 @@ def main():
                             print(f"   Entry     : {entry}")
                             print(f"   SL        : {stop_loss}")
                             print(f"   TP        : {take_profit}")
+
                     # --------------------------------------------------
-                    # TRADE MANAGEMENT (BUY ONLY - Realtime 5M)
+                    # TRADE MANAGEMENT (SELL ONLY - Realtime 5M) - MIRRORED
                     # --------------------------------------------------
                     if state.trade_planned and state.trade is not None:
+                        trade = state.trade
 
-                            trade = state.trade
+                        # Safety: only manage SELL trades here
+                        if trade["direction"] != "SELL":
+                            pass
+                        else:
+                            entry = trade["entry"]
+                            sl = trade["sl"]
+                            tp = trade["tp"]
 
-                            # Safety: only manage BUY trades here
-                            if trade["direction"] != "BUY":
-                                pass
-                            else:
-                                entry = trade["entry"]
-                                sl = trade["sl"]
-                                tp = trade["tp"]
+                            candle_high = candle_5m["high"]
+                            candle_low = candle_5m["low"]
+                            candle_time = candle_5m["time"]
 
-                                candle_high = candle_5m["high"]
-                                candle_low = candle_5m["low"]
-                                candle_time = candle_5m["time"]
+                            # ==================================================
+                            # ENTRY NOT FILLED YET
+                            # ==================================================
+                            if not state.entry_filled:
+                                entry_filled_this_candle = False
 
-                                # ==================================================
-                                # ENTRY NOT FILLED YET
-                                # ==================================================
-                                if not state.entry_filled:
+                                # -----------------------------
+                                # ENTRY CHECK FIRST
+                                # -----------------------------
+                                if candle_low <= entry <= candle_high:
+                                    entry_filled_this_candle = True
 
-                                    entry_filled_this_candle = False
+                                if entry_filled_this_candle:
+                                    state.entry_filled = True
+                                    trade["status"] = "OPEN"
+                                    trade["entry_time"] = candle_time
 
-                                    # -----------------------------
-                                    # ENTRY CHECK FIRST
-                                    # -----------------------------
-                                    if candle_low <= entry <= candle_high:
-                                        entry_filled_this_candle = True
+                                    print(f"🔴 SELL ENTRY FILLED @ {entry} | {candle_time}")
 
-                                    if entry_filled_this_candle:
-                                        state.entry_filled = True
-                                        trade["status"] = "OPEN"
-                                        trade["entry_time"] = candle_time
-
-                                        print(f"🟢 BUY ENTRY FILLED @ {entry} | {candle_time}")
-
-                                    else:
-                                        # --------------------------------------------------
-                                        # 2% TP MOVE WITHOUT ENTRY → INVALIDATE TRADE
-                                        # --------------------------------------------------
-                                        tp_2pct_level = entry + 0.02 * (tp - entry)
-
-                                        if candle_high >= tp_2pct_level:
-                                            print(
-                                                f"🟩 TP MOVE WITHOUT ENTRY (2% HIT @ {tp_2pct_level}) → TRADE INVALID"
-                                            )
-
-                                            # 🔥 RESET TRADE STATE
-                                            state.trade = None
-                                            state.trade_planned = False
-                                            state.entry_filled = False
-
-                                            continue
-
-                                # ==================================================
-                                # ENTRY FILLED → CHECK SL / TP
-                                # ==================================================
                                 else:
+                                    # --------------------------------------------------
+                                    # 2% TP MOVE WITHOUT ENTRY → INVALIDATE TRADE
+                                    # --------------------------------------------------
+                                    tp_2pct_level = entry - 0.02 * (entry - tp)  # MIRRORED: Downwards
 
-                                    # -----------------------------
-                                    # STOP LOSS
-                                    # -----------------------------
-                                    if candle_low <= sl:
-                                        print(f"🟥 BUY SL HIT @ {sl}")
+                                    if candle_low <= tp_2pct_level:
+                                        print(f"🟥 TP MOVE WITHOUT ENTRY (2% HIT @ {tp_2pct_level}) → TRADE INVALID")
 
-                                        trade["status"] = "SL"
-                                        trade["exit_time"] = candle_time
-                                        trade["exit_price"] = sl
-
+                                        # 🔥 RESET TRADE STATE
                                         state.trade = None
                                         state.trade_planned = False
                                         state.entry_filled = False
 
                                         continue
 
-                                    # -----------------------------
-                                    # TAKE PROFIT
-                                    # -----------------------------
-                                    elif candle_high >= tp:
-                                        print(f"🟩 BUY TP HIT @ {tp}")
+                            # ==================================================
+                            # ENTRY FILLED → CHECK SL / TP
+                            # ==================================================
+                            else:
+                                # -----------------------------
+                                # STOP LOSS (SELL VERSION)
+                                # -----------------------------
+                                if candle_high >= sl:
+                                    print(f"🟥 SELL SL HIT @ {sl}")
 
-                                        trade["status"] = "TP"
-                                        trade["exit_time"] = candle_time
-                                        trade["exit_price"] = tp
+                                    trade["status"] = "SL"
+                                    trade["exit_time"] = candle_time
+                                    trade["exit_price"] = sl
 
-                                        state.trade = None
-                                        state.trade_planned = False
-                                        state.entry_filled = False
+                                    state.trade = None
+                                    state.trade_planned = False
+                                    state.entry_filled = False
 
-                                        continue
+                                    continue
 
+                                # -----------------------------
+                                # TAKE PROFIT (SELL VERSION)
+                                # -----------------------------
+                                elif candle_low <= tp:
+                                    print(f"🟩 SELL TP HIT @ {tp}")
 
+                                    trade["status"] = "TP"
+                                    trade["exit_time"] = candle_time
+                                    trade["exit_price"] = tp
+
+                                    state.trade = None
+                                    state.trade_planned = False
+                                    state.entry_filled = False
+
+                                    continue
 
             except ValueError:
                 continue
