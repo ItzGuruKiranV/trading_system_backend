@@ -120,6 +120,7 @@ def detect_pois_from_swing(
                 "trend": trend.upper(),
                 "price_low": float(base_low),
                 "price_high": float(base_high),
+                "if_valid" : True ,
             })
             break
 
@@ -205,6 +206,7 @@ def detect_pois_from_swing(
             "trend": trend.upper(),
             "price_low": float(liq_price) if is_bull else None,
             "price_high": float(liq_price) if not is_bull else None,
+            "if_valid" : True,
         })
 
     # ======================================================

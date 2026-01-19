@@ -58,7 +58,7 @@ class PairState:
     buffer_5m_sl: List[dict] = field(default_factory=list)  # swing low / high buffer
     buffer_5m_poi: List[dict] = field(default_factory=list)  # 5M candles for POI mapping
 
-    trend_5m: str = "NEUTRAL"  # current 5M trend
+    trend_5m: str = None  # current 5M trend
 
     # -----------------------------
     # POI / TAP / PROTECTION
@@ -81,7 +81,8 @@ class PairState:
     trade_planned: bool = False
     entry_filled: bool = False
 
-    choch_5m_this_candle: bool = False  # flag to mark the exact candle where 5M CHOCH occurred
+    choch_5m: bool = False  # flag to mark the exact candle where 5M CHOCH occurred
+    market_trend_5m=None
     
     
     leg_locked = False
