@@ -5,12 +5,15 @@ import asyncio
 import threading
 from backend import run1
 
-# from journal.router import router as journal_router
+from journal.router import router as journal_router
 from calculator.router import router as calculator_router
 from news.router import router as news_router
 
 from ws.event_router import router as event_router
 from ws.candle_router import router as candle_router
+from backtest.router import router as backtest_router
+
+
 
 
 app = FastAPI(title="Trading Backend")
@@ -23,10 +26,10 @@ app.add_middleware(
 )
 
 # REST APIs
-# app.include_router(journal_router)
+app.include_router(journal_router)
 app.include_router(calculator_router)
 app.include_router(news_router)
-
+app.include_router(backtest_router)
 # -------------------------
 # STARTUP EVENTS
 # -------------------------
