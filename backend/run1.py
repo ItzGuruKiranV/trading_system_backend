@@ -29,7 +29,7 @@ class Candle:
 # CONFIG
 # ==================================================
 MINUTE_CSV_PATH = Path(
-    r"C:\Gurukiran\projects\trading_system\trading_system_backend\HISTDATA_COM_MT_EURUSD_M12022\DAT_MT_EURUSD_M1_2022.csv"
+    r"D:\Trading Project\trading_system_backend\HISTDATA_COM_MT_EURUSD_M12022\DAT_MT_EURUSD_M1_2022.csv"
 )
 
 # Buffers
@@ -681,6 +681,8 @@ def main():
                         valid_pullback_5m = state.pullback_count_5m >= 2 or retrace >= 0.75
 
                         if valid_pullback_5m:
+                            state.swing_low_5m=state.candidate_low_5m
+
                             state.buffer_5m_sh.append(candle_5m)    
                             #BOS 5m                        
                             if candle_5m["low"] < state.candidate_low_5m:
@@ -721,6 +723,8 @@ def main():
                         print(f"   5M Pullback Check: Count={state.pullback_count_5m}, Retrace={retrace:.2f}, Valid={valid_pullback_5m}")
 
                         if valid_pullback_5m:
+                            state.swing_high_5m=state.candidate_high_5m
+
                             state.buffer_5m_sl.append(candle_5m)    
                             #BOS 5m                        
                             if candle_5m["high"] < state.candidate_high_5m:
@@ -822,6 +826,7 @@ def main():
                         if candle_5m["high"] > state.swing_high_5m :
                             state.choch_5m=True
                             state.trade_active 
+                            state.current_poi=state.active_poi
                             state.active_poi=None
                             state.poi_tapped=False
                             # 📡 Broadcast 5M CHOCH
@@ -858,6 +863,7 @@ def main():
 
                             # Safety check
                             if range_high is None or range_low is None:
+                                print("range high :{range_high},range low: {range_low}")
                                 print("❌ Invalid range — trade skipped")
                                 continue
 
@@ -890,9 +896,9 @@ def main():
 
                                 # Context
                                 "htf_trend": state.trend_4h,
-                                "poi_type": state.active_poi["type"],
-                                "poi_price_low": state.active_poi.get("price_low"),
-                                "poi_price_high": state.active_poi.get("price_high"),
+                                "poi_type": state.current_poi["type"],
+                                "poi_price_low": state.current_poi.get("price_low"),
+                                "poi_price_high": state.current_poi.get("price_high"),
                                 "poi_time": state.poi_tapped_time,
 
                                 "choch_time": candle_5m["time"],
@@ -996,23 +1002,23 @@ def main():
 
                                         print(f"🟢 BUY ENTRY FILLED @ {entry} | {candle_time}")
 
-                                    else:
-                                        # --------------------------------------------------
-                                        # 2% TP MOVE WITHOUT ENTRY → INVALIDATE TRADE
-                                        # --------------------------------------------------
-                                        tp_2pct_level = entry + 0.02 * (tp - entry)
+                                    # else:
+                                    #     # --------------------------------------------------
+                                    #     # 2% TP MOVE WITHOUT ENTRY → INVALIDATE TRADE
+                                    #     # --------------------------------------------------
+                                    #     tp_2pct_level = entry + 0.02 * (tp - entry)
 
-                                        if candle_high >= tp_2pct_level:
-                                            print(
-                                                f"🟩 TP MOVE WITHOUT ENTRY (2% HIT @ {tp_2pct_level}) → TRADE INVALID"
-                                            )
+                                    #     if candle_high >= tp_2pct_level:
+                                    #         print(
+                                    #             f"🟩 TP MOVE WITHOUT ENTRY (2% HIT @ {tp_2pct_level}) → TRADE INVALID"
+                                    #         )
 
-                                            # 🔥 RESET TRADE STATE
-                                            state.trade = None
-                                            state.trade_planned = False
-                                            state.entry_filled = False
+                                    #         # 🔥 RESET TRADE STATE
+                                    #         state.trade = None
+                                    #         state.trade_planned = False
+                                    #         state.entry_filled = False
 
-                                            continue
+                                    #         continue
 
                                 # ==================================================
                                 # ENTRY FILLED → CHECK SL / TP
@@ -1069,20 +1075,21 @@ def main():
 
                         if candle_5m["high"] > state.candidate_high_5m and state.pullback_count_5m < 2:
                             state.candidate_high_5m = candle_5m["high"]
+
                             state.pullback_count_5m = 0
 
                         retrace = (state.candidate_high_5m - candle_5m["low"]) / max(state.candidate_high_5m - state.swing_low_5m, 1e-9)
                         valid_pullback_5m = state.pullback_count_5m >= 2 or retrace >= 0.75
 
                         if valid_pullback_5m:
+                            state.swing_high_5m=state.candidate_high_5m
                             state.buffer_5m_sl.append(candle_5m)
-                            # BOS 5m (BEARISH VERSION)
+                            # BOS 5m 
                             if candle_5m["high"] > state.candidate_high_5m:
                                 swing_candle = min(
                                     state.buffer_5m_sl,
                                     key=lambda c: c["low"]
                                 )
-
                                 state.swing_low_5m = swing_candle["low"]
                                 state.swing_low_5m_time = swing_candle["time"]
                                 state.protected_5m_point = state.swing_low_5m
@@ -1114,6 +1121,8 @@ def main():
                         print(f"   5M Pullback Check: Count={state.pullback_count_5m}, Retrace={retrace:.2f}, Valid={valid_pullback_5m}")
 
                         if valid_pullback_5m:
+                            state.swing_low_5m=state.candidate_low_5m
+
                             state.buffer_5m_sh.append(candle_5m)
                             # BOS 5m (BEARISH VERSION)
                             if candle_5m["low"] < state.candidate_low_5m:
@@ -1216,6 +1225,7 @@ def main():
                         if candle_5m["low"] < state.swing_low_5m:
                             state.choch_5m = True
                             state.trade_active = True
+                            state.current_poi=state.active_poi
                             state.active_poi = None
                             state.poi_tapped = False
                             
@@ -1254,6 +1264,8 @@ def main():
 
                             # Safety check
                             if range_high is None or range_low is None:
+                                print(f"range high :{range_high},range low: {range_low}")
+
                                 print("❌ Invalid range — trade skipped")
                                 continue
 
@@ -1286,9 +1298,9 @@ def main():
 
                                 # Context
                                 "htf_trend": state.trend_4h,
-                                "poi_type": state.active_poi["type"],
-                                "poi_price_low": state.active_poi.get("price_low"),
-                                "poi_price_high": state.active_poi.get("price_high"),
+                                "poi_type": state.current_poi["type"],
+                                "poi_price_low": state.current_poi.get("price_low"),
+                                "poi_price_high": state.current_poi.get("price_high"),
                                 "poi_time": state.poi_tapped_time,
 
                                 "choch_time": candle_5m["time"],
@@ -1391,21 +1403,21 @@ def main():
 
                                     print(f"🔴 SELL ENTRY FILLED @ {entry} | {candle_time}")
 
-                                else:
-                                    # --------------------------------------------------
-                                    # 2% TP MOVE WITHOUT ENTRY → INVALIDATE TRADE
-                                    # --------------------------------------------------
-                                    tp_2pct_level = entry - 0.02 * (entry - tp)  # MIRRORED: Downwards
+                                # else:
+                                #     # --------------------------------------------------
+                                #     # 2% TP MOVE WITHOUT ENTRY → INVALIDATE TRADE
+                                #     # --------------------------------------------------
+                                #     tp_2pct_level = entry - 0.02 * (entry - tp)  # MIRRORED: Downwards
 
-                                    if candle_low <= tp_2pct_level:
-                                        print(f"🟥 TP MOVE WITHOUT ENTRY (2% HIT @ {tp_2pct_level}) → TRADE INVALID")
+                                #     if candle_low <= tp_2pct_level :
+                                #         print(f"🟥 TP MOVE WITHOUT ENTRY (2% HIT @ {tp_2pct_level}) → TRADE INVALID")
 
-                                        # 🔥 RESET TRADE STATE
-                                        state.trade = None
-                                        state.trade_planned = False
-                                        state.entry_filled = False
+                                #         # 🔥 RESET TRADE STATE
+                                #         state.trade = None
+                                #         state.trade_planned = False
+                                #         state.entry_filled = False
 
-                                        continue
+                                #         continue
 
                             # ==================================================
                             # ENTRY FILLED → CHECK SL / TP

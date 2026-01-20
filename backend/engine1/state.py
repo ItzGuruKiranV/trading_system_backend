@@ -65,6 +65,8 @@ class PairState:
     # -----------------------------
     mapped_pois: List[dict] = field(default_factory=list)
     active_poi: Optional[dict] = None
+    current_poi: Optional[dict] = None
+    
     poi_tapped: bool = False
     poi_tapped_level: Optional[float] = None
     poi_tapped_time: Optional[datetime] = None
