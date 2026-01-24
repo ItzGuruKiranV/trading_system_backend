@@ -89,3 +89,5 @@ class PairState:
     
     leg_locked = False
     last_leg_start_time = None
+
+    last_candle_time: Optional[datetime] = None

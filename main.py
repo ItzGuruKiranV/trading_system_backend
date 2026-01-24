@@ -42,13 +42,23 @@ app.include_router(event_router)
 
 @app.on_event("startup")
 async def startup():
-    # give FastAPI event loop to run1 module
-    run1.event_loop = asyncio.get_running_loop()
+    # 1. Give FastAPI event loop to run1 module
+    loop = asyncio.get_running_loop()
+    run1.event_loop = loop
+    
+    # 2. Initialize managers
+    run1.ws_manager.set_loop(loop)
+    run1.event_manager.set_loop(loop)
 
-@app.on_event("startup")
-async def start_engine():
-    # start CSV / realtime engine in background
-    threading.Thread(target=run1.main, daemon=True).start()
+    PAIRS = ["EURUSD", "GBPJPY"]
+
+    for pair in PAIRS:
+        run1.start_engine(pair)
+
+@app.on_event("shutdown")
+def stop_engine():
+    print("[INFO] FastAPI shutdown detected. Stopping all engines...")
+    run1.manager.stop_all_engines()
 
 @app.get("/")
 def root():
