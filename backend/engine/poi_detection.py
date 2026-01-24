@@ -1,12 +1,11 @@
 import pandas as pd
 from typing import List, Dict
 
-
-import pandas as pd
+price_low = None
+price_high = None
 
 def sort_pois_merged(pois):
     def bull_key(p):
-        # For BULLISH, OB uses price_high, LIQ uses price_low
         if p['type'] == 'OB':
             return p['price_high']
         elif p['type'] == 'LIQ':
@@ -14,7 +13,6 @@ def sort_pois_merged(pois):
         return 0
 
     def bear_key(p):
-        # For BEARISH, OB uses price_low, LIQ uses price_high
         if p['type'] == 'OB':
             return p['price_low']
         elif p['type'] == 'LIQ':
@@ -24,12 +22,9 @@ def sort_pois_merged(pois):
     bull_pois = [p for p in pois if p['trend'] == 'BULLISH']
     bear_pois = [p for p in pois if p['trend'] == 'BEARISH']
 
-    # Sort BULLISH descending
     bull_sorted = sorted(bull_pois, key=bull_key, reverse=True)
-    # Sort BEARISH ascending
     bear_sorted = sorted(bear_pois, key=bear_key)
 
-    # Merge
     return bull_sorted + bear_sorted
 
 
@@ -37,7 +32,7 @@ def detect_pois_from_swing(
     ohlc_df: pd.DataFrame,
     trend: str,
     ob_multiplier: float = 1.8,
-    liq_pullback_candles: int = 2,
+    liq_pullback_candles: int = 4,
 ) -> List[Dict]:
 
     df = ohlc_df[["open", "high", "low", "close"]].copy()
@@ -50,88 +45,63 @@ def detect_pois_from_swing(
     # ======================================================
     # 1️⃣ INSTITUTIONAL ORDER BLOCK DETECTION (UNCHANGED)
     # ======================================================
-    for i in range(3, n - 3):
+    for i in range(0, n - 2):
+        next_candle = df.iloc[i + 1]
 
-        disp_window = df.iloc[i:i+3]
-        disp_high = disp_window["high"].max()
-        disp_low = disp_window["low"].min()
-        disp_range = disp_high - disp_low
+        closes = next_candle["close"]
+        opens = next_candle["open"]
 
-        prev_ranges = df["range"].iloc[i-5:i]
-        avg_prev_range = prev_ranges.mean()
+        disp_range = (closes - opens) if is_bull else (opens - closes)
 
-        if avg_prev_range <= 0:
-            continue
-
-        closes = disp_window["close"]
-        opens = disp_window["open"]
-
-        direction_ok = (
-            (closes > opens).sum() >= 2 if is_bull
-            else (closes < opens).sum() >= 2
-        )
-
+        direction_ok = (closes > opens) if is_bull else (closes < opens)
         if not direction_ok:
             continue
 
-        if disp_range < ob_multiplier * avg_prev_range:
+        base = df.iloc[i]
+
+        if is_bull and base["close"] >= base["open"]:
+            continue
+        if not is_bull and base["close"] <= base["open"]:
             continue
 
-        lookback = df.iloc[i-10:i]
-        if lookback.empty:
+        base_low = base["low"]
+        base_high = base["high"]
+        base_range = base_high - base_low
+
+        if base_range <= 0 or disp_range < ob_multiplier * base_range:
             continue
+
+        future = df.iloc[i + 2:]
+        if not future.empty:
+            if is_bull and (future["low"] < base_high).any():
+                continue
+            if not is_bull and (future["high"] > base_low).any():
+                continue
 
         if is_bull:
-            if disp_high <= lookback["high"].max():
-                continue
+            price_low = min(base_low, next_candle["low"])
+            price_high = base_high
         else:
-            if disp_low >= lookback["low"].min():
-                continue
+            price_low = base_low
+            price_high = max(base_high, next_candle["high"])
 
-        for lb in [3, 2, 1]:
-            base = df.iloc[i-lb:i]
-            base_low = base["low"].min()
-            base_high = base["high"].max()
-            base_range = base_high - base_low
-
-            if base_range <= 0:
-                continue
-
-            if base_range > 0.30 * disp_range:
-                continue
-
-            if is_bull:
-                if not (base["close"] < base["open"]).any():
-                    continue
-            else:
-                if not (base["close"] > base["open"]).any():
-                    continue
-
-            future = df.iloc[i+3:]
-            if not future.empty:
-                if is_bull and (future["low"] < base_low).any():
-                    continue
-                if not is_bull and (future["high"] > base_high).any():
-                    continue
-
-            pois.append({
-                "time": df.index[i-lb],
-                "type": "OB",
-                "trend": trend.upper(),
-                "price_low": float(base_low),
-                "price_high": float(base_high),
-                "if_valid" : True ,
-            })
-            break
+        pois.append({
+            "time": df.index[i],
+            "type": "OB",
+            "trend": trend.upper(),
+            "price_low": float(price_low),
+            "price_high": float(price_high),
+            "if_valid": True,
+        })
 
     # ======================================================
-    # 🔧 OB MERGING LOGIC (NEW – ONLY REFINEMENT)
+    # 🔧 OB MERGING LOGIC (UNCHANGED)
     # ======================================================
     obs = [p for p in pois if p["type"] == "OB"]
-    liqs = [p for p in pois if p["type"] == "LIQ"]
+    liqs = []
 
     obs.sort(key=lambda x: x["time"])
-    merged_obs: List[Dict] = []
+    merged_obs = []
 
     for ob in obs:
         if not merged_obs:
@@ -153,66 +123,121 @@ def detect_pois_from_swing(
             merged_obs.append(ob)
 
     # ======================================================
-    # 2️⃣ INSTITUTIONAL LIQUIDITY DETECTION (UNCHANGED)
+    # 2️⃣ INSTITUTIONAL LIQUIDITY DETECTION (WITH YOUR RULE)
     # ======================================================
-    for i in range(liq_pullback_candles, n - 1):
+    temp_high = df.iloc[0]["high"]
+    temp_low = df.iloc[0]["low"]
 
-        pullback = df.iloc[i - liq_pullback_candles:i]
+    pullback_indices = []
+    in_pullback = False
+    prev_pb_high = None
+    prev_pb_low = None
 
-        if is_bull:
-            if not (pullback["close"] < pullback["open"]).all():
+    i = 1
+    while i < n:
+
+        candle = df.iloc[i]
+
+        # --------------------------
+        # IMPULSE UPDATE
+        # --------------------------
+        if not in_pullback:
+            if is_bull:
+                temp_high = max(temp_high, candle["high"])
+            else:
+                temp_low = min(temp_low, candle["low"])
+
+        # --------------------------
+        # PULLBACK CANDLE DETECTION
+        # --------------------------
+        is_pullback = (
+            (candle["close"] < candle["open"]) if is_bull
+            else (candle["close"] > candle["open"])
+        )
+
+        if is_pullback:
+
+            # 🔒 YOUR STRUCTURAL RULE
+            if prev_pb_high is not None:
+                if is_bull and candle["high"] > prev_pb_high:
+                    pullback_indices = []
+                    in_pullback = False
+                    prev_pb_high = prev_pb_low = None
+                    i += 1
+                    continue
+
+                if not is_bull and candle["low"] < prev_pb_low:
+                    pullback_indices = []
+                    in_pullback = False
+                    prev_pb_high = prev_pb_low = None
+                    i += 1
+                    continue
+
+            pullback_indices.append(i)
+            in_pullback = True
+            prev_pb_high = candle["high"]
+            prev_pb_low = candle["low"]
+
+        # --------------------------
+        # WAIT FOR BOS
+        # --------------------------
+        if in_pullback and len(pullback_indices) >= liq_pullback_candles:
+
+            zone_low = df.iloc[pullback_indices]["low"].min()
+            zone_high = df.iloc[pullback_indices]["high"].max()
+
+            k = i + 1
+            while k < n:
+                curr = df.iloc[k]
+
+                if is_bull and curr["high"] > temp_high:
+                    liq_price = zone_low
+                    break
+
+                if not is_bull and curr["low"] < temp_low:
+                    liq_price = zone_high
+                    break
+
+                zone_low = min(zone_low, curr["low"])
+                zone_high = max(zone_high, curr["high"])
+                k += 1
+            else:
+                pullback_indices = []
+                in_pullback = False
+                prev_pb_high = prev_pb_low = None
+                i += 1
                 continue
-        else:
-            if not (pullback["close"] > pullback["open"]).all():
-                continue
 
-        prior_df = df.iloc[:i - liq_pullback_candles]
-        if prior_df.empty:
+            future = df.iloc[k + 1:]
+            if not future.empty:
+                tapped = (
+                    (future["low"] <= liq_price).any()
+                    if is_bull
+                    else (future["high"] >= liq_price).any()
+                )
+                if tapped:
+                    pullback_indices = []
+                    in_pullback = False
+                    prev_pb_high = prev_pb_low = None
+                    i = k + 1
+                    continue
+
+            liqs.append({
+                "time": df.index[pullback_indices[-1]],
+                "type": "LIQ",
+                "trend": trend.upper(),
+                "price_low": float(liq_price) if is_bull else None,
+                "price_high": float(liq_price) if not is_bull else None,
+                "if_valid": True,
+            })
+
+            pullback_indices = []
+            in_pullback = False
+            prev_pb_high = prev_pb_low = None
+            i = k + 1
             continue
 
-        if is_bull:
-            swing_extreme = prior_df["low"].min()
-            pb_extreme = pullback["high"].max()
-            retrace_level = swing_extreme + 0.5 * (pb_extreme - swing_extreme)
-        else:
-            swing_extreme = prior_df["high"].max()
-            pb_extreme = pullback["low"].min()
-            retrace_level = swing_extreme - 0.5 * (swing_extreme - pb_extreme)
+        i += 1
 
-        curr = df.iloc[i]
-
-        if is_bull:
-            if curr["low"] > retrace_level:
-                continue
-            liq_price = swing_extreme
-        else:
-            if curr["high"] < retrace_level:
-                continue
-            liq_price = swing_extreme
-
-        future = df.iloc[i + 1:]
-        if not future.empty:
-            tapped = (
-                (future["low"] <= liq_price).any()
-                if is_bull
-                else (future["high"] >= liq_price).any()
-            )
-            if tapped:
-                continue
-
-        liqs.append({
-            "time": df.index[i - 1],
-            "type": "LIQ",
-            "trend": trend.upper(),
-            "price_low": float(liq_price) if is_bull else None,
-            "price_high": float(liq_price) if not is_bull else None,
-            "if_valid" : True,
-        })
-
-    # ======================================================
-    # FINAL OUTPUT
-    # ======================================================
     pois = merged_obs + liqs
-    sorted_pois = sort_pois_merged(pois)
-    print(sorted_pois)
-    return sorted_pois
+    return sort_pois_merged(pois)

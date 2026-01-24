@@ -7,6 +7,7 @@ import time
 import asyncio
 from ws.manager import ws_manager
 from ws.event_manager import event_manager
+from db.supabase_client import supabase
 
 from backend.engine1.registry import StateRegistry
 from backend.engine.poi_detection import detect_pois_from_swing 
@@ -29,7 +30,7 @@ class Candle:
 # CONFIG
 # ==================================================
 MINUTE_CSV_PATH = Path(
-    r"D:\Trading Project\trading_system_backend\HISTDATA_COM_MT_EURUSD_M12022\DAT_MT_EURUSD_M1_2022.csv"
+    r"C:\Gurukiran\projects\trading_system\trading_system_backend\HISTDATA_COM_MT_EURUSD_M12022\DAT_MT_EURUSD_M1_2022.csv"
 )
 
 # Buffers
@@ -72,18 +73,12 @@ state.bearish_count = 0
 state.bullish_count = 0
 
 def reset_on_4h_structure(state):
-    # -----------------------------
-    # POI state
-    # -----------------------------
     state.mapped_pois = []
     state.active_poi = None
     state.poi_tapped = False
     state.poi_tapped_level = None
     state.poi_tapped_time = None
 
-    # -----------------------------
-    # 5M structure state
-    # -----------------------------
     state.trend_5m = None
 
     state.swing_high_5m = None
@@ -97,14 +92,36 @@ def reset_on_4h_structure(state):
     state.buffer_5m_sh.clear()
     state.buffer_5m_sl.clear()
 
-    # -----------------------------
-    # Clear 4H → 5M mapping buffers
-    # -----------------------------
     state.active_pois = []
 
     state.trade = None
     state.trade_planned = False
     state.entry_filled = False
+
+
+
+def save_trade_to_db(
+    pair: str,
+    trade_date: str,
+    side: str,
+    result: str,
+    entry: float,
+    exit_price: float,
+    pnl: float,
+):
+    data = {
+        "pair": pair,
+        "trade_date": trade_date,
+        "side": side,
+        "result": result,
+        "entry": entry,
+        "exit": exit_price,
+        "pnl": pnl,
+    }
+
+    response = supabase.table("backtest_trades").insert(data).execute()
+
+    return response
 
 
 # ==================================================
@@ -1035,11 +1052,34 @@ def main():
                                         trade["exit_time"] = candle_time
                                         trade["exit_price"] = sl
 
+                                        # =========================
+                                        # 📦 PUSH TO SUPABASE
+                                        # =========================
+                                        try:
+                                            supabase.table("backtest_trades").insert({
+                                                "pair": "EURUSD",                # default for now
+                                                "trade_date": "1900-01-01",      # temp confirmation
+                                                "side": "BUY",
+                                                "result": "LOSS",
+                                                "entry": trade["entry"],
+                                                "exit": sl,
+                                                "pnl": -100                      # fixed -100 for now
+                                            }).execute()
+
+                                            print("✅ BUY SL trade stored in DB")
+
+                                        except Exception as e:
+                                            print("❌ Failed to store BUY SL trade:", e)
+
+                                        # =========================
+                                        # 🔄 RESET STATE
+                                        # =========================
                                         state.trade = None
                                         state.trade_planned = False
                                         state.entry_filled = False
 
                                         continue
+
 
                                     # -----------------------------
                                     # TAKE PROFIT
@@ -1051,11 +1091,34 @@ def main():
                                         trade["exit_time"] = candle_time
                                         trade["exit_price"] = tp
 
+                                        # =========================
+                                        # 📦 PUSH TO SUPABASE
+                                        # =========================
+                                        try:
+                                            supabase.table("backtest_trades").insert({
+                                                "pair": "EURUSD",                # default for now
+                                                "trade_date": "1900-01-01",      # temp confirmation date
+                                                "side": "BUY",
+                                                "result": "WIN",
+                                                "entry": trade["entry"],
+                                                "exit": tp,
+                                                "pnl": 100                       # fixed +100 for now
+                                            }).execute()
+
+                                            print("✅ BUY TP trade stored in DB")
+
+                                        except Exception as e:
+                                            print("❌ Failed to store BUY TP trade:", e)
+
+                                        # =========================
+                                        # 🔄 RESET STATE
+                                        # =========================
                                         state.trade = None
                                         state.trade_planned = False
                                         state.entry_filled = False
 
                                         continue
+
 
 
                 if state.trend_4h == "BEARISH":
@@ -1433,6 +1496,18 @@ def main():
                                     trade["exit_time"] = candle_time
                                     trade["exit_price"] = sl
 
+
+                                    save_trade_to_db(
+                                        pair="EURUSD",
+                                        trade_date="1900-01-01",
+                                        side="SELL",
+                                        result="SL",
+                                        entry=trade["entry"],
+                                        exit_price=sl,
+                                        pnl=-100
+                                    )
+
+
                                     state.trade = None
                                     state.trade_planned = False
                                     state.entry_filled = False
@@ -1449,11 +1524,34 @@ def main():
                                     trade["exit_time"] = candle_time
                                     trade["exit_price"] = tp
 
+                                    # =========================
+                                    # 📦 PUSH TO SUPABASE
+                                    # =========================
+                                    try:
+                                        supabase.table("backtest_trades").insert({
+                                            "pair": "EURUSD",                # default for now
+                                            "trade_date": "1900-01-01",      # temp confirmation date
+                                            "side": "SELL",
+                                            "result": "WIN",
+                                            "entry": trade["entry"],
+                                            "exit": tp,
+                                            "pnl": 100                       # fixed +100 for now
+                                        }).execute()
+
+                                        print("✅ SELL TP trade stored in DB")
+
+                                    except Exception as e:
+                                        print("❌ Failed to store SELL TP trade:", e)
+
+                                    # =========================
+                                    # 🔄 RESET STATE
+                                    # =========================
                                     state.trade = None
                                     state.trade_planned = False
                                     state.entry_filled = False
 
                                     continue
+
 
             except ValueError:
                 continue
