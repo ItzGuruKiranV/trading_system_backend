@@ -6,26 +6,33 @@ import asyncio
 
 router = APIRouter()
 
-@router.websocket("/ws/candles")
-async def ws_stream(ws: WebSocket):
-    await ws_manager.connect(ws)
+@router.websocket("/ws/candles/{pair}")
+async def ws_stream(ws: WebSocket, pair: str):
+    pair = pair.upper()
+    await ws.accept()
+    await ws_manager.connect(ws, pair)
+    num_clients = len(ws_manager.clients.get(pair, []))
+    print(f"🟢 client-{num_clients} connected to candlews for {pair}")
+
     try:
         while True:
-            # WAIT FOR INIT/SWITCH MESSAGE
-            data = await ws.receive_text()
-            init_data = json.loads(data)
+            await ws.receive_text()
 
-            symbol = init_data.get("symbol")
-            tf = init_data.get("tf")
+        # while True:
+        #     # WAIT FOR INIT/SWITCH MESSAGE
+        #     data = await ws.receive_text()
+        #     init_data = json.loads(data)
 
-            if symbol:
-                print(f"🔄 Candle switch/init received: {symbol} {tf}")
-                ws_manager.subscribe(ws, symbol, tf)
-            else:
-                print("⚠️ Received WS message without symbol")
+        #     symbol = init_data.get("symbol")
+        #     tf = init_data.get("tf")
+
+        #     if symbol:
+        #         print(f"🔄 Candle switch/init received: {symbol} {tf}")
+        #         ws_manager.subscribe(ws, symbol, tf)
+        #     else:
+        #         print("⚠️ Received WS message without symbol")
 
     except Exception as e:
-        ws_manager.disconnect(ws)
         print(f"🔴 Candle WS disconnected: {e}")
     finally:
-        ws_manager.disconnect(ws)
+        ws_manager.disconnect(ws, pair)

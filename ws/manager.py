@@ -1,95 +1,149 @@
 # ws/manager.py
+
 import json
 import asyncio
 import threading
 from fastapi import WebSocket
+import datetime
 
 class WSManager:
+    """
+    PURE BROADCAST WebSocket manager
+
+    - Backend pushes EVERYTHING
+    - Frontend filters what it wants
+    - No subscriptions
+    - No symbols
+    - No timeframes
+    """
+
     def __init__(self):
-        self.clients = {}  # Map: WebSocket -> symbol
-        self.queue = asyncio.Queue()
+        self.clients: dict[str, set[WebSocket]] = {}  # key = symbol
+        self.queue: asyncio.Queue = asyncio.Queue()
+        self.loop: asyncio.AbstractEventLoop | None = None
         self.lock = threading.Lock()
-        self.loop = None
         self.worker_task = None
+        self.heartbeat_task = None
 
-    async def connect(self, ws: WebSocket, symbol: str = None):
-        await ws.accept()
+    # -------------------------
+    # CONNECTION MANAGEMENT
+    # -------------------------
+
+    async def connect(self, ws: WebSocket, symbol: str):
+        symbol = symbol.upper()
         with self.lock:
-            self.clients[ws] = symbol
-        print(f"[BUY] Candle WS connected: {len(self.clients)} clients (Symbol: {symbol})")
+            if symbol not in self.clients:
+                self.clients[symbol] = set()
+            self.clients[symbol].add(ws)
 
-    def disconnect(self, ws: WebSocket):
+    def disconnect(self, ws: WebSocket, symbol: str):
+        symbol = symbol.upper()
         with self.lock:
-            if ws in self.clients:
-                del self.clients[ws]
-        print(f"[SELL] Candle WS disconnected: {len(self.clients)} clients left")
+            if symbol in self.clients:
+                self.clients[symbol].discard(ws)
+                num_clients = len(self.clients[symbol])
+                print(f"🔴 client-{num_clients} disconnected from candlews for {symbol}")
 
-    def has_active_clients(self, symbol: str) -> bool:
-        """Check if any client is currently subscribed to this symbol."""
-        with self.lock:
-            for sub_data in self.clients.values():
-                if isinstance(sub_data, dict):
-                    if sub_data.get("symbol") == symbol:
-                        return True
-                elif sub_data == symbol:
-                    return True
-            return False
+    # -------------------------
+    # EVENT LOOP SETUP
+    # -------------------------
 
-    def subscribe(self, ws: WebSocket, symbol: str, tf: str = None):
-        """Update the symbol and timeframe for an existing connection."""
-        with self.lock:
-            if ws in self.clients:
-                self.clients[ws] = {"symbol": symbol, "tf": tf}
-                print(f"🔄 Client subscribed to: {symbol} ({tf})")
-        
-
-    def set_loop(self, loop):
+    def set_loop(self, loop: asyncio.AbstractEventLoop):
+        print("🟢 WSManager.set_loop called")
         """
-        Sets the event loop and starts the worker if not already running.
-        Must be called from the async context (or where loop is available).
+        Called ONCE during FastAPI startup.
+        Starts background broadcast worker and heartbeat.
         """
         self.loop = loop
+
         if self.worker_task is None:
-            self.worker_task = self.loop.create_task(self._worker())
-            print(f"[DONE] WSManager worker started on loop: {self.loop}")
+            self.worker_task = loop.create_task(self._worker())
+            print("🚀 WSManager worker started")
+
+        if self.heartbeat_task is None:
+            self.heartbeat_task = loop.create_task(self._heartbeat())
+            print("💓 WSManager heartbeat started")
+
+    # -------------------------
+    # HEARTBEAT
+    # -------------------------
+
+    async def _heartbeat(self):
+        while True:
+            await asyncio.sleep(5)  # send heartbeat every 5 seconds
+            with self.lock:
+                for symbol, clients in self.clients.items():
+                    for ws in list(clients):
+                        asyncio.create_task(self._safe_send(ws, {"type": "heartbeat", "time": str(datetime.datetime.utcnow())}, symbol))
+
+    async def _safe_send(self, ws: WebSocket, message: dict, symbol: str):
+        try:
+            await ws.send_text(json.dumps(message, default=str))
+        except Exception:
+            self.disconnect(ws, symbol)
+
+    # -------------------------
+    # BACKGROUND WORKER
+    # -------------------------
 
     async def _worker(self):
-        """Background worker that broadcasts events from the queue."""
-        print(f"[DONE] WSManager worker RUNNING on loop: {asyncio.get_running_loop()}")
+        print("🟡 WSManager worker running")
         while True:
             message = await self.queue.get()
             await self._broadcast(message)
             self.queue.task_done()
 
     async def _broadcast(self, message: dict):
-        """Broadcast to ALL clients (timeframe/pair independent flow)."""
-        text = json.dumps(message, default=str)
+        """
+        Sends message to ONLY relevant symbol clients.
+        Expects message to have a 'symbol' key.
+        """
+        symbol = message.get("symbol")
+        if not symbol:
+            print("⚠️ No symbol in message, dropping")
+            return
         
+        symbol = symbol.upper()
+
+        text = json.dumps(message, default=str)
+
         with self.lock:
-            items = list(self.clients.items())
-            
-        for ws, sub_data in items:
+            clients = list(self.clients.get(symbol, []))  # ✅ only clients of that symbol
+
+        for ws in clients:
             try:
                 await ws.send_text(text)
             except Exception:
-                self.disconnect(ws)
+                self.disconnect(ws, symbol)
+
+    # -------------------------
+    # THREAD-SAFE PUSH
+    # -------------------------
 
     def send_threadsafe(self, message: dict):
         """
-        Thread-safe way to enqueue an event.
-        Can be called from any thread, including backtesting loop.
+        SAFE to call from:
+        - engine threads
+        - backtests
+        - background workers
         """
-        if self.loop is None:
-            print("[WARN] WSManager loop not set! Cannot send message.")
+        if not self.loop:
+            print("⚠️ WSManager loop not set, dropping message")
             return
 
         try:
-            self.loop.call_soon_threadsafe(self.queue.put_nowait, message)
+            self.loop.call_soon_threadsafe(
+                self.queue.put_nowait,
+                message
+            )
         except asyncio.QueueFull:
-            print("[WARN] WSManager queue full! Dropping message.")
+            print("⚠️ WS queue full, message dropped")
         except Exception as e:
-            print(f"[WARN] WSManager send_threadsafe error: {e}")
+            print(f"⚠️ WS send error: {e}")
 
 
-# Singleton
+# -------------------------
+# SINGLETON INSTANCE
+# -------------------------
+
 ws_manager = WSManager()

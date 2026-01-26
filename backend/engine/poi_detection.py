@@ -1,8 +1,8 @@
 import pandas as pd
 from typing import List, Dict
+import plotly.graph_objects as go
+from datetime import datetime
 
-price_low = None
-price_high = None
 
 def sort_pois_merged(pois):
     def bull_key(p):
@@ -25,9 +25,68 @@ def sort_pois_merged(pois):
     bull_sorted = sorted(bull_pois, key=bull_key, reverse=True)
     bear_sorted = sorted(bear_pois, key=bear_key)
 
+    # print(f"Sorted {len(bull_sorted)} bullish POIs and {len(bear_sorted)} bearish POIs.")
     return bull_sorted + bear_sorted
 
 
+# # ======================================================
+# # 🔧 TEMP DEBUG PLOTTING FUNCTION (HTML)
+# # ======================================================
+# def plot_pois_debug(df: pd.DataFrame, pois: List[Dict], trend: str):
+#     fig = go.Figure()
+
+#     # Candles
+#     fig.add_trace(go.Candlestick(
+#         x=df.index,
+#         open=df["open"],
+#         high=df["high"],
+#         low=df["low"],
+#         close=df["close"],
+#         name="Price"
+#     ))
+
+#     # POIs
+#     for p in pois:
+#         if p["type"] == "OB":
+#             fig.add_shape(
+#                 type="rect",
+#                 x0=p["time"],
+#                 x1=df.index[-1],
+#                 y0=p["price_low"],
+#                 y1=p["price_high"],
+#                 fillcolor="rgba(0, 200, 0, 0.25)" if p["trend"] == "BULLISH" else "rgba(200, 0, 0, 0.25)",
+#                 line_width=0,
+#                 layer="below"
+#             )
+
+#         elif p["type"] == "LIQ":
+#             y = p["price_low"] if p["trend"] == "BULLISH" else p["price_high"]
+#             fig.add_shape(
+#                 type="line",
+#                 x0=p["time"],
+#                 x1=df.index[-1],
+#                 y0=y,
+#                 y1=y,
+#                 line=dict(color="blue", width=2, dash="dash")
+#             )
+
+#     fig.update_layout(
+#         title=f"POI Debug Plot — {trend}",
+#         xaxis_title="Time",
+#         yaxis_title="Price",
+#         xaxis_rangeslider_visible=False,
+#         template="plotly_dark",
+#         height=700
+#     )
+
+#     fname = f"pois_debug_{trend.lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+#     fig.write_html(fname)
+#     print(f"📊 POI debug plot saved: {fname}")
+
+
+# ======================================================
+# 🧠 POI DETECTION LOGIC
+# ======================================================
 def detect_pois_from_swing(
     ohlc_df: pd.DataFrame,
     trend: str,
@@ -43,14 +102,13 @@ def detect_pois_from_swing(
     n = len(df)
 
     # ======================================================
-    # 1️⃣ INSTITUTIONAL ORDER BLOCK DETECTION (UNCHANGED)
+    # 1️⃣ ORDER BLOCK DETECTION
     # ======================================================
     for i in range(0, n - 2):
         next_candle = df.iloc[i + 1]
 
         closes = next_candle["close"]
         opens = next_candle["open"]
-
         disp_range = (closes - opens) if is_bull else (opens - closes)
 
         direction_ok = (closes > opens) if is_bull else (closes < opens)
@@ -95,7 +153,7 @@ def detect_pois_from_swing(
         })
 
     # ======================================================
-    # 🔧 OB MERGING LOGIC (UNCHANGED)
+    # 🔧 OB MERGING
     # ======================================================
     obs = [p for p in pois if p["type"] == "OB"]
     liqs = []
@@ -123,7 +181,7 @@ def detect_pois_from_swing(
             merged_obs.append(ob)
 
     # ======================================================
-    # 2️⃣ INSTITUTIONAL LIQUIDITY DETECTION (WITH YOUR RULE)
+    # 2️⃣ LIQUIDITY DETECTION (DEBUG VERSION)
     # ======================================================
     temp_high = df.iloc[0]["high"]
     temp_low = df.iloc[0]["low"]
@@ -133,9 +191,9 @@ def detect_pois_from_swing(
     prev_pb_high = None
     prev_pb_low = None
 
+
     i = 1
     while i < n:
-
         candle = df.iloc[i]
 
         # --------------------------
@@ -143,23 +201,30 @@ def detect_pois_from_swing(
         # --------------------------
         if not in_pullback:
             if is_bull:
+                old = temp_high
                 temp_high = max(temp_high, candle["high"])
+                # if temp_high != old:
+                #     print(f"📈 Updated temp_high → {temp_high}")
             else:
+                old = temp_low
                 temp_low = min(temp_low, candle["low"])
+                # if temp_low != old:
+                #     print(f"📉 Updated temp_low → {temp_low}")
 
         # --------------------------
-        # PULLBACK CANDLE DETECTION
+        # PULLBACK DETECTION
         # --------------------------
         is_pullback = (
             (candle["close"] < candle["open"]) if is_bull
             else (candle["close"] > candle["open"])
         )
 
-        if is_pullback:
+        # print(f"↩️ Pullback candle? {is_pullback}")
 
-            # 🔒 YOUR STRUCTURAL RULE
+        if is_pullback:
             if prev_pb_high is not None:
                 if is_bull and candle["high"] > prev_pb_high:
+                    # print("❌ Pullback INVALIDATED (higher high in bullish PB)")
                     pullback_indices = []
                     in_pullback = False
                     prev_pb_high = prev_pb_low = None
@@ -167,6 +232,7 @@ def detect_pois_from_swing(
                     continue
 
                 if not is_bull and candle["low"] < prev_pb_low:
+                    # print("❌ Pullback INVALIDATED (lower low in bearish PB)")
                     pullback_indices = []
                     in_pullback = False
                     prev_pb_high = prev_pb_low = None
@@ -178,36 +244,50 @@ def detect_pois_from_swing(
             prev_pb_high = candle["high"]
             prev_pb_low = candle["low"]
 
+            # print(f"✅ Pullback accepted | PB candles = {len(pullback_indices)}")
+
         # --------------------------
         # WAIT FOR BOS
         # --------------------------
         if in_pullback and len(pullback_indices) >= liq_pullback_candles:
-
             zone_low = df.iloc[pullback_indices]["low"].min()
             zone_high = df.iloc[pullback_indices]["high"].max()
+
+            # print(f"⏳ Waiting for BOS | Zone low={zone_low}, high={zone_high}")
 
             k = i + 1
             while k < n:
                 curr = df.iloc[k]
 
+                # print(f"   🔎 Checking BOS at candle {k} "
+                #     f"(H={curr['high']} L={curr['low']})")
+
                 if is_bull and curr["high"] > temp_high:
                     liq_price = zone_low
+                    # print(f"🔥 BOS CONFIRMED (bullish) at {k}, LIQ price={liq_price}")
+                    temp_high = curr["high"]
                     break
 
                 if not is_bull and curr["low"] < temp_low:
                     liq_price = zone_high
+                    # print(f"🔥 BOS CONFIRMED (bearish) at {k}, LIQ price={liq_price}")
+                    temp_low = curr["low"]
                     break
 
                 zone_low = min(zone_low, curr["low"])
                 zone_high = max(zone_high, curr["high"])
                 k += 1
             else:
+                # print("❌ BOS never happened — reset pullback")
                 pullback_indices = []
                 in_pullback = False
                 prev_pb_high = prev_pb_low = None
                 i += 1
                 continue
 
+            # --------------------------
+            # TAPPED CHECK
+            # --------------------------
             future = df.iloc[k + 1:]
             if not future.empty:
                 tapped = (
@@ -215,12 +295,18 @@ def detect_pois_from_swing(
                     if is_bull
                     else (future["high"] >= liq_price).any()
                 )
+
+                # print(f"👀 Future tap check → tapped={tapped}")
+
                 if tapped:
+                    # print("❌ LIQ REJECTED (tapped later)")
                     pullback_indices = []
                     in_pullback = False
                     prev_pb_high = prev_pb_low = None
                     i = k + 1
                     continue
+
+            # print("✅ LIQ ACCEPTED & STORED")
 
             liqs.append({
                 "time": df.index[pullback_indices[-1]],
@@ -239,5 +325,11 @@ def detect_pois_from_swing(
 
         i += 1
 
+
     pois = merged_obs + liqs
+    print(f"Detected {len(merged_obs)} OBs and {len(liqs)} LIQs for {trend} trend.")
+
+    # 🔥 TEMP HTML DEBUG
+    # plot_pois_debug(df, pois, trend)
+
     return sort_pois_merged(pois)

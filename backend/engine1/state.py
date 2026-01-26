@@ -15,6 +15,8 @@ class PairState:
     choch_level_4h: Optional[float] = None 
     bos_level_4h: Optional[float] = None  # BOS candle level (price)
     bos_time_4h: Optional[datetime] = None
+    swing_high_time: Optional[datetime] = None
+    swing_low_time: Optional[datetime] = None
     h4_structure_event: Optional[Literal["BOS", "CHOCH"]] = None
 
     # Pullback tracking
@@ -24,7 +26,9 @@ class PairState:
     protected_low: Optional[float] = None
 
     candidate_high: Optional[float] = None
+    candidate_high_time: Optional[datetime] = None
     candidate_low: Optional[float] = None
+    candidate_low_time: Optional[datetime] = None
 
     bearish_count: int = 0
     bullish_count: int = 0
