@@ -15,7 +15,7 @@ async def events_ws(ws: WebSocket, pair: str):
 
     try:
         while True:
-            await ws.receive_text()
+            await asyncio.sleep(60)
             # Optionally wait for subscription message
             # If the frontend sends {"symbol": "GBPJPY"} to /ws/market
             # data = await ws.receive_text()

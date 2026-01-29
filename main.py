@@ -10,7 +10,6 @@ from calculator.router import router as calculator_router
 from news.router import router as news_router
 
 from ws.event_router import router as event_router
-from ws.candle_router import router as candle_router
 from backtest.router import router as backtest_router
 
 
@@ -36,7 +35,8 @@ app.include_router(backtest_router)
 
 
 # WebSocket API
-app.include_router(candle_router)
+# Candle WS router intentionally NOT included: backend no longer sends candles.
+# Frontend loads candles from CSV and connects to /ws/market/{pair} for events only.
 app.include_router(event_router)
 
 
@@ -45,6 +45,9 @@ async def startup():
     # 1. Give FastAPI event loop to run1 module
     loop = asyncio.get_running_loop()
     run1.event_loop = loop
+    # Print working directory so it's clear which copy is running
+    import os
+    print(f"[INFO] Starting backend from: {os.getcwd()}")
     
     # 2. Initialize managers
     run1.ws_manager.set_loop(loop)

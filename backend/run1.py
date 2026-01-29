@@ -13,7 +13,15 @@ from db.supabase_client import supabase
 
 from backend.engine1.registry import StateRegistry
 from backend.engine.poi_detection import detect_pois_from_swing 
-MAX_REPLAY = 5000  # Max candles to keep in replay buffer
+MAX_REPLAY = 1000  # Max candles to keep in replay buffer
+# Simulation config
+SIMULATE_REALTIME = True
+# If True, pause for `PAUSE_SECONDS` after every emitted event
+PAUSE_ON_EACH_EVENT = False
+# Specific dates (YYYY-MM-DD) to pause on when an event with that date is emitted
+PAUSE_ON_DATES: list[str] = []
+# seconds to pause when triggered
+PAUSE_SECONDS = 0.05
 # Global registry
 registry = StateRegistry()
 
@@ -43,9 +51,7 @@ class TradingEngine:
         self.buffer_5m = []  # Holds completed 5M candles
         self.buffer_5m_poi = []       # NEW: only for POI mapping (cleared after poi mapping)
         self.leg_buffer_4h = []     # Holds 4H candles from BOS → pullback
-         # NEW buffers for replay
-        self.replay_buffer_5m = []   # completed 5m candles for frontend
-        self.replay_buffer_4h = []   # completed 4h candles for frontend
+        # (replay buffers removed — frontend loads candles from CSV)
         
         # Load Config / State Defaults if needed (minimal reset logic)
         # If trend is NEUTRAL or bos_time is missing, we need to bootstrap it.
@@ -75,6 +81,13 @@ class TradingEngine:
             self.state.pullback_time = None
             self.state.bearish_count = 0
             self.state.bullish_count = 0
+
+    def send_event(self, payload: dict):
+        """Thread-safe pass-through to `event_manager.send_threadsafe` (no simulation pauses)."""
+        try:
+            event_manager.send_threadsafe(payload)
+        except Exception as e:
+            print(f"[WARN] Failed to send event: {e}")
 
     def reset_on_4h_structure(self):
         self.state.mapped_pois = []
@@ -197,19 +210,18 @@ class TradingEngine:
                                 "close": self.bucket_5m[-1].close,
                             }
 
-                            ws_manager.send_threadsafe({
-                                "type": "candle",
-                                "symbol": self.symbol,
-                                "tf": "5m",
-                                "timestamp": int(self.curr_5m_time.timestamp() * 1000),
-                                "open": candle_5m["open"],
-                                "high": candle_5m["high"],
-                                "low": candle_5m["low"],
-                                "close": candle_5m["close"],
-                            })
+                            # ws_manager.send_threadsafe({
+                            #     "type": "candle",
+                            #     "symbol": self.symbol,
+                            #     "tf": "5m",
+                            #     "timestamp": int(self.curr_5m_time.timestamp() * 1000),
+                            #     "open": candle_5m["open"],
+                            #     "high": candle_5m["high"],
+                            #     "low": candle_5m["low"],
+                            #     "close": candle_5m["close"],
+                            # })
 
-                            self.replay_buffer_5m.append(candle_5m)
-                            self.replay_buffer_5m = self.replay_buffer_5m[-MAX_REPLAY:]
+                            # replay buffer disabled (frontend reads candles from CSV)
 
                             self.buffer_5m.append(candle_5m)
                             self.buffer_5m_poi.append(candle_5m)
@@ -249,19 +261,18 @@ class TradingEngine:
                                     "close": self.curr_4h_bucket[-1]["close"],
                                 }
 
-                                ws_manager.send_threadsafe({
-                                    "type": "candle",
-                                    "symbol": self.symbol,
-                                    "tf": "4h",
-                                    "timestamp": int(self.curr_4h_time.timestamp() * 1000),
-                                    "open": candle_4h["open"],
-                                    "high": candle_4h["high"],
-                                    "low": candle_4h["low"],
-                                    "close": candle_4h["close"],
-                                })
+                                    # ws_manager.send_threadsafe({
+                                    #     "type": "candle",
+                                    #     "symbol": self.symbol,
+                                    #     "tf": "4h",
+                                    #     "timestamp": int(self.curr_4h_time.timestamp() * 1000),
+                                    #     "open": candle_4h["open"],
+                                    #     "high": candle_4h["high"],
+                                    #     "low": candle_4h["low"],
+                                    #     "close": candle_4h["close"],
+                                    # })
                             
-                                self.replay_buffer_4h.append(candle_4h)
-                                self.replay_buffer_4h = self.replay_buffer_4h[-MAX_REPLAY:]
+                                # replay buffer disabled (frontend reads candles from CSV)
                             
                                 # Reset for next 4h window
                                 self.curr_4h_time = floored_4h_time
@@ -318,7 +329,7 @@ class TradingEngine:
                                                                 }
                                                             ]
                                                         }
-                                                        event_manager.send_threadsafe(event_payload)
+                                                        self.send_event(event_payload)
 
                                                 self.state.candidate_high = None
                                                 self.state.bearish_count = 0
@@ -365,11 +376,11 @@ class TradingEngine:
 
                                                 if liq_events:
                                                     payload = {"symbol": self.symbol, "timeframe": "4H", "events": liq_events}
-                                                    event_manager.send_threadsafe(payload)
+                                                    self.send_event(payload)
 
                                                 if ob_events:
                                                     payload = {"symbol": self.symbol, "timeframe": "4H", "events": ob_events}
-                                                    event_manager.send_threadsafe(payload)
+                                                    self.send_event(payload)
                                                 
                                                 mapped_pois = []
 
@@ -428,8 +439,9 @@ class TradingEngine:
                                                 self.state.bullish_count = 0
                                                 self.state.bearish_count = 0
 
-                                                # 📡 Broadcast CHOCH
-                                                if not is_historical:
+                                                broken_level = self.state.swing_low
+                                                if  not is_historical and broken_level is not None:
+
                                                     event_payload = {
                                                         "symbol": self.symbol,
                                                         "timeframe": "4h",
@@ -437,12 +449,12 @@ class TradingEngine:
                                                             {
                                                                 "id": f"4H_CHOCH_{candle_4h['time'].strftime('%Y%m%d_%H%M')}",
                                                                 "type": "CHOCH",
-                                                                "broken_level": self.state.swing_low,
+                                                                "broken_level": self.state.swing_high,
                                                                 "time": broken_swing_time.isoformat()
                                                             }
                                                         ]
                                                     }
-                                                    event_manager.send_threadsafe(event_payload)
+                                                    self.send_event(event_payload)
 
                                                 self.buffer_5m.clear()  
                                                 self.leg_buffer_4h.clear()
@@ -483,7 +495,7 @@ class TradingEngine:
                                                             }
                                                         ]
                                                     }
-                                                    event_manager.send_threadsafe(event_payload)
+                                                    self.send_event(event_payload)
                                                     
                                                 self.leg_buffer_4h.clear()
                                                 self.buffer_5m.clear()
@@ -524,7 +536,7 @@ class TradingEngine:
                                                                 }
                                                             ]
                                                         }
-                                                        event_manager.send_threadsafe(event_payload)
+                                                    self.send_event(event_payload)
                                                 
                                                 print("leg buff", len(self.leg_buffer_4h))
                                                 swing_df = pd.DataFrame(self.leg_buffer_4h).set_index("time")
@@ -573,7 +585,7 @@ class TradingEngine:
                                                         "timeframe": "4H",
                                                         "events": liq_events
                                                     }
-                                                    event_manager.send_threadsafe(payload)
+                                                    self.send_event(payload)
 
                                                 if ob_events:
                                                     payload = {
@@ -581,7 +593,7 @@ class TradingEngine:
                                                         "timeframe": "4H",
                                                         "events": ob_events
                                                     }
-                                                    event_manager.send_threadsafe(payload)
+                                                    self.send_event(payload)
 
                                                 mapped_pois = []
 
@@ -637,20 +649,22 @@ class TradingEngine:
                                                 self.state.pullback_time = None
                                                 self.state.bullish_count = 0
                                                 self.state.bearish_count = 0
+                                                broken_level = self.state.swing_high
+                                                if  broken_level is not None:
 
-                                                event_payload = {
-                                                    "symbol": self.symbol,
-                                                    "timeframe": "4h",
-                                                    "events": [
-                                                        {
-                                                            "id": f"4H_CHOCH_{candle_4h['time'].strftime('%Y%m%d_%H%M')}",
-                                                            "type": "CHOCH",
-                                                            "broken_level": self.state.swing_high,
-                                                            "time": broken_swing_time.isoformat()
-                                                        }
-                                                    ]
-                                                }
-                                                event_manager.send_threadsafe(event_payload)
+                                                    event_payload = {
+                                                        "symbol": self.symbol,
+                                                        "timeframe": "4h",
+                                                        "events": [
+                                                            {
+                                                                "id": f"4H_CHOCH_{candle_4h['time'].strftime('%Y%m%d_%H%M')}",
+                                                                "type": "CHOCH",
+                                                                "broken_level": self.state.swing_high,
+                                                                "time": broken_swing_time.isoformat()
+                                                            }
+                                                        ]
+                                                    }
+                                                    self.send_event(event_payload)
 
                                                 self.buffer_5m.clear()  
                                                 self.leg_buffer_4h.clear()
@@ -688,7 +702,7 @@ class TradingEngine:
                                                         }
                                                     ]
                                                 }
-                                                event_manager.send_threadsafe(event_payload)
+                                                self.send_event(event_payload)
                                                     
                                                 self.leg_buffer_4h.clear()
                                                 self.buffer_5m.clear()
@@ -875,7 +889,7 @@ class TradingEngine:
                                                 }
                                             ]
                                         }
-                                        event_manager.send_threadsafe(event_payload)
+                                        self.send_event(event_payload)
                                     # --------------------------------------------------
                                     # TRADE SETUP (CHOCH + POI)
                                     # --------------------------------------------------
@@ -960,8 +974,8 @@ class TradingEngine:
                                             ]
                                         }
                                         
-                                        event_manager.send_threadsafe(retr_event)
-                                        event_manager.send_threadsafe(plan_event)
+                                        self.send_event(retr_event)
+                                        self.send_event(plan_event)
 
                                         print(f"[{self.symbol}] [START] TRADE PLANNED & STORED")
 
@@ -1193,7 +1207,7 @@ class TradingEngine:
                                                 }
                                             ]
                                         }
-                                        event_manager.send_threadsafe(event_payload)
+                                        self.send_event(event_payload)
 
                                     # --------------------------------------------------
                                     # TRADE SETUP (CHOCH + POI) - MIRRORED FOR BEARISH
@@ -1279,8 +1293,8 @@ class TradingEngine:
                                             ]
                                         }
                                         
-                                        event_manager.send_threadsafe(retr_event)
-                                        event_manager.send_threadsafe(plan_event)
+                                        self.send_event(retr_event)
+                                        self.send_event(plan_event)
 
                                         print(f"[{self.symbol}] [START] TRADE PLANNED & STORED")
 
@@ -1369,7 +1383,7 @@ class EngineManager:
 
             print(f"[START] Starting Trading Engine for {symbol}...")
             engine = TradingEngine(symbol)
-            thread = threading.Thread(target=engine.run, daemon=False, name=f"Engine-{symbol}")
+            thread = threading.Thread(target=engine.run, daemon=True, name=f"Engine-{symbol}")
             
             self.engines[symbol] = engine
             self.threads[symbol] = thread
@@ -1405,7 +1419,7 @@ def start_engine(symbol: str):
 # ==================================================
 def main():
     while event_loop is None:
-        time.sleep(0.05)
+        time.sleep(0.1)
 
     print("🔌 Initializing Event & WS Managers with FastAPI loop...")
     ws_manager.set_loop(event_loop)

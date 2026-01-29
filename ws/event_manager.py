@@ -3,7 +3,6 @@ from fastapi import WebSocket
 import asyncio
 import json
 import threading
-import datetime
 class EventManager:
     """
     PURE BROADCAST EVENT MANAGER
@@ -30,6 +29,9 @@ class EventManager:
             if symbol not in self.clients:
                 self.clients[symbol] = set()
             self.clients[symbol].add(ws)
+            num_clients = len(self.clients[symbol])
+            print(f"🟢 client-{num_clients} connected to marketws for {symbol}")
+
 
     def disconnect(self, ws: WebSocket, symbol: str):
         symbol = symbol.upper()
@@ -48,26 +50,11 @@ class EventManager:
         self.loop = loop
         if self.worker_task is None:
             self.worker_task = loop.create_task(self._worker())
-            loop.create_task(self._heartbeat()) 
             print("🚀 EventManager worker started")
 
     # -------------------------
     # BACKGROUND WORKER
     # -------------------------
-    async def _heartbeat(self):
-        while True:
-            await asyncio.sleep(5)  # every 5 seconds
-            with self.lock:
-                symbols = list(self.clients.keys())
-            
-            for symbol in symbols:
-                await self._broadcast({
-                    "symbol": symbol,
-                    "type": "heartbeat", 
-                    "time": str(datetime.datetime.utcnow())
-                })
-
-
     async def _worker(self):
         print("🟡 EventManager worker running")
         while True:
@@ -77,22 +64,35 @@ class EventManager:
 
     async def _broadcast(self, message: dict):
         symbol = message.get("symbol")
+
         if not symbol:
-            if message.get("type") == "heartbeat":
-                return
             print("⚠️ No symbol in event message, dropping")
             return
-        
-        symbol = symbol.upper()
 
+        symbol = symbol.upper()
+        timeframe = message.get("timeframe")
+        events = message.get("events") if isinstance(message.get("events"), list) else []
+
+        # 🔍 Proper debug logging (reflects REAL structure)
+        evt_count = len(events)
+        print(f"[EVENT_BCAST] {symbol} {timeframe} -> {evt_count} events")
+
+        for e in events:
+            print(
+                f"   • type={e.get('type')} | id={e.get('id')} | time={e.get('time')}"
+            )
+
+        # Convert to text once
         text = json.dumps(message, default=str)
+
+        # Copy clients safely
         with self.lock:
             clients = list(self.clients.get(symbol, []))
 
+        # 🚀 Fire-and-forget sending
         for ws in clients:
-            # fire-and-forget: one slow client won't block others
             asyncio.create_task(self._safe_send(ws, text, symbol))
-
+    
     async def _safe_send(self, ws: WebSocket, text: str, symbol: str):
         try:
             await ws.send_text(text)

@@ -29,59 +29,59 @@ def sort_pois_merged(pois):
     return bull_sorted + bear_sorted
 
 
-# # ======================================================
-# # 🔧 TEMP DEBUG PLOTTING FUNCTION (HTML)
-# # ======================================================
-# def plot_pois_debug(df: pd.DataFrame, pois: List[Dict], trend: str):
-#     fig = go.Figure()
+# ======================================================
+# 🔧 TEMP DEBUG PLOTTING FUNCTION (HTML)
+# ======================================================
+def plot_pois_debug(df: pd.DataFrame, pois: List[Dict], trend: str):
+    fig = go.Figure()
 
-#     # Candles
-#     fig.add_trace(go.Candlestick(
-#         x=df.index,
-#         open=df["open"],
-#         high=df["high"],
-#         low=df["low"],
-#         close=df["close"],
-#         name="Price"
-#     ))
+    # Candles
+    fig.add_trace(go.Candlestick(
+        x=df.index,
+        open=df["open"],
+        high=df["high"],
+        low=df["low"],
+        close=df["close"],
+        name="Price"
+    ))
 
-#     # POIs
-#     for p in pois:
-#         if p["type"] == "OB":
-#             fig.add_shape(
-#                 type="rect",
-#                 x0=p["time"],
-#                 x1=df.index[-1],
-#                 y0=p["price_low"],
-#                 y1=p["price_high"],
-#                 fillcolor="rgba(0, 200, 0, 0.25)" if p["trend"] == "BULLISH" else "rgba(200, 0, 0, 0.25)",
-#                 line_width=0,
-#                 layer="below"
-#             )
+    # POIs
+    for p in pois:
+        if p["type"] == "OB":
+            fig.add_shape(
+                type="rect",
+                x0=p["time"],
+                x1=df.index[-1],
+                y0=p["price_low"],
+                y1=p["price_high"],
+                fillcolor="rgba(0, 200, 0, 0.25)" if p["trend"] == "BULLISH" else "rgba(200, 0, 0, 0.25)",
+                line_width=0,
+                layer="below"
+            )
 
-#         elif p["type"] == "LIQ":
-#             y = p["price_low"] if p["trend"] == "BULLISH" else p["price_high"]
-#             fig.add_shape(
-#                 type="line",
-#                 x0=p["time"],
-#                 x1=df.index[-1],
-#                 y0=y,
-#                 y1=y,
-#                 line=dict(color="blue", width=2, dash="dash")
-#             )
+        elif p["type"] == "LIQ":
+            y = p["price_low"] if p["trend"] == "BULLISH" else p["price_high"]
+            fig.add_shape(
+                type="line",
+                x0=p["time"],
+                x1=df.index[-1],
+                y0=y,
+                y1=y,
+                line=dict(color="blue", width=2, dash="dash")
+            )
 
-#     fig.update_layout(
-#         title=f"POI Debug Plot — {trend}",
-#         xaxis_title="Time",
-#         yaxis_title="Price",
-#         xaxis_rangeslider_visible=False,
-#         template="plotly_dark",
-#         height=700
-#     )
+    fig.update_layout(
+        title=f"POI Debug Plot — {trend}",
+        xaxis_title="Time",
+        yaxis_title="Price",
+        xaxis_rangeslider_visible=False,
+        template="plotly_dark",
+        height=700
+    )
 
-#     fname = f"pois_debug_{trend.lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-#     fig.write_html(fname)
-#     print(f"📊 POI debug plot saved: {fname}")
+    fname = f"pois_debug_{trend.lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+    fig.write_html(fname)
+    print(f"📊 POI debug plot saved: {fname}")
 
 
 # ======================================================
@@ -181,147 +181,116 @@ def detect_pois_from_swing(
             merged_obs.append(ob)
 
     # ======================================================
-    # 2️⃣ LIQUIDITY DETECTION (DEBUG VERSION)
+    # 2️⃣ LIQUIDITY DETECTION (SIMPLE & CLEAN)
     # ======================================================
+
     temp_high = df.iloc[0]["high"]
-    temp_low = df.iloc[0]["low"]
+    temp_low  = df.iloc[0]["low"]
 
-    pullback_indices = []
-    in_pullback = False
-    prev_pb_high = None
-    prev_pb_low = None
-
+    pullback_count = 0
+    liq_buffer_indices = []
 
     i = 1
     while i < n:
         candle = df.iloc[i]
 
-        # --------------------------
-        # IMPULSE UPDATE
-        # --------------------------
-        if not in_pullback:
-            if is_bull:
-                old = temp_high
-                temp_high = max(temp_high, candle["high"])
-                # if temp_high != old:
-                #     print(f"📈 Updated temp_high → {temp_high}")
-            else:
-                old = temp_low
-                temp_low = min(temp_low, candle["low"])
-                # if temp_low != old:
-                #     print(f"📉 Updated temp_low → {temp_low}")
-
-        # --------------------------
-        # PULLBACK DETECTION
-        # --------------------------
-        is_pullback = (
-            (candle["close"] < candle["open"]) if is_bull
-            else (candle["close"] > candle["open"])
-        )
-
-        # print(f"↩️ Pullback candle? {is_pullback}")
-
-        if is_pullback:
-            if prev_pb_high is not None:
-                if is_bull and candle["high"] > prev_pb_high:
-                    # print("❌ Pullback INVALIDATED (higher high in bullish PB)")
-                    pullback_indices = []
-                    in_pullback = False
-                    prev_pb_high = prev_pb_low = None
-                    i += 1
-                    continue
-
-                if not is_bull and candle["low"] < prev_pb_low:
-                    # print("❌ Pullback INVALIDATED (lower low in bearish PB)")
-                    pullback_indices = []
-                    in_pullback = False
-                    prev_pb_high = prev_pb_low = None
-                    i += 1
-                    continue
-
-            pullback_indices.append(i)
-            in_pullback = True
-            prev_pb_high = candle["high"]
-            prev_pb_low = candle["low"]
-
-            # print(f"✅ Pullback accepted | PB candles = {len(pullback_indices)}")
-
-        # --------------------------
-        # WAIT FOR BOS
-        # --------------------------
-        if in_pullback and len(pullback_indices) >= liq_pullback_candles:
-            zone_low = df.iloc[pullback_indices]["low"].min()
-            zone_high = df.iloc[pullback_indices]["high"].max()
-
-            # print(f"⏳ Waiting for BOS | Zone low={zone_low}, high={zone_high}")
-
-            k = i + 1
-            while k < n:
-                curr = df.iloc[k]
-
-                # print(f"   🔎 Checking BOS at candle {k} "
-                #     f"(H={curr['high']} L={curr['low']})")
-
-                if is_bull and curr["high"] > temp_high:
-                    liq_price = zone_low
-                    # print(f"🔥 BOS CONFIRMED (bullish) at {k}, LIQ price={liq_price}")
-                    temp_high = curr["high"]
-                    break
-
-                if not is_bull and curr["low"] < temp_low:
-                    liq_price = zone_high
-                    # print(f"🔥 BOS CONFIRMED (bearish) at {k}, LIQ price={liq_price}")
-                    temp_low = curr["low"]
-                    break
-
-                zone_low = min(zone_low, curr["low"])
-                zone_high = max(zone_high, curr["high"])
-                k += 1
-            else:
-                # print("❌ BOS never happened — reset pullback")
-                pullback_indices = []
-                in_pullback = False
-                prev_pb_high = prev_pb_low = None
-                i += 1
-                continue
+        # ==========================
+        # 🔼 BULLISH TREND
+        # ==========================
+        if is_bull:
 
             # --------------------------
-            # TAPPED CHECK
+            # Price still inside structure
             # --------------------------
-            future = df.iloc[k + 1:]
-            if not future.empty:
-                tapped = (
-                    (future["low"] <= liq_price).any()
-                    if is_bull
-                    else (future["high"] >= liq_price).any()
-                )
+            if candle["high"] < temp_high:
+                liq_buffer_indices.append(i)
 
-                # print(f"👀 Future tap check → tapped={tapped}")
+                # bearish candle = pullback
+                if candle["close"] < candle["open"]:
+                    pullback_count += 1
 
-                if tapped:
-                    # print("❌ LIQ REJECTED (tapped later)")
-                    pullback_indices = []
-                    in_pullback = False
-                    prev_pb_high = prev_pb_low = None
-                    i = k + 1
-                    continue
+            # --------------------------
+            # BOS after pullback → LIQ
+            # --------------------------
+            elif pullback_count >= liq_pullback_candles and candle["high"] > temp_high:
+                buffer_df = df.iloc[liq_buffer_indices]
+                liq_price = buffer_df["low"].min()
 
-            # print("✅ LIQ ACCEPTED & STORED")
+                # 🔎 future tap check
+                future = df.iloc[i + 1:]
+                tapped = (future["low"] <= liq_price).any() if not future.empty else False
 
-            liqs.append({
-                "time": df.index[pullback_indices[-1]],
-                "type": "LIQ",
-                "trend": trend.upper(),
-                "price_low": float(liq_price) if is_bull else None,
-                "price_high": float(liq_price) if not is_bull else None,
-                "if_valid": True,
-            })
+                if not tapped:
+                    liqs.append({
+                        "time": df.index[i],
+                        "type": "LIQ",
+                        "trend": trend.upper(),
+                        "price_low": float(liq_price),
+                        "price_high": None,
+                        "if_valid": True,
+                    })
 
-            pullback_indices = []
-            in_pullback = False
-            prev_pb_high = prev_pb_low = None
-            i = k + 1
-            continue
+                # ✅ RESET after BOS
+                temp_high = candle["high"]
+                pullback_count = 0
+                liq_buffer_indices = []
+
+            # --------------------------
+            # Direct impulse continuation
+            # --------------------------
+            elif candle["high"] > temp_high:
+                temp_high = candle["high"]
+                pullback_count = 0
+                liq_buffer_indices = []
+
+        # ==========================
+        # 🔽 BEARISH TREND (MIRROR)
+        # ==========================
+        else:
+
+            # --------------------------
+            # Price still inside structure
+            # --------------------------
+            if candle["low"] > temp_low:
+                liq_buffer_indices.append(i)
+
+                # bullish candle = pullback
+                if candle["close"] > candle["open"]:
+                    pullback_count += 1
+
+            # --------------------------
+            # BOS after pullback → LIQ
+            # --------------------------
+            elif pullback_count >= liq_pullback_candles and candle["low"] < temp_low:
+                buffer_df = df.iloc[liq_buffer_indices]
+                liq_price = buffer_df["high"].max()
+
+                # 🔎 future tap check
+                future = df.iloc[i + 1:]
+                tapped = (future["high"] >= liq_price).any() if not future.empty else False
+
+                if not tapped:
+                    liqs.append({
+                        "time": df.index[i],
+                        "type": "LIQ",
+                        "trend": trend.upper(),
+                        "price_low": None,
+                        "price_high": float(liq_price),
+                        "if_valid": True,
+                    })
+
+                # ✅ RESET after BOS
+                temp_low = candle["low"]
+                pullback_count = 0
+                liq_buffer_indices = []
+
+            # --------------------------
+            # Direct impulse continuation
+            # --------------------------
+            elif candle["low"] < temp_low:
+                temp_low = candle["low"]
+                pullback_count = 0
+                liq_buffer_indices = []
 
         i += 1
 
@@ -329,7 +298,8 @@ def detect_pois_from_swing(
     pois = merged_obs + liqs
     print(f"Detected {len(merged_obs)} OBs and {len(liqs)} LIQs for {trend} trend.")
 
-    # 🔥 TEMP HTML DEBUG
-    # plot_pois_debug(df, pois, trend)
-
+    #plot_pois_debug(df, pois, trend)
     return sort_pois_merged(pois)
+
+
+

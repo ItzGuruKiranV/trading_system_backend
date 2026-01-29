@@ -4,7 +4,6 @@ import json
 import asyncio
 import threading
 from fastapi import WebSocket
-import datetime
 
 class WSManager:
     """
@@ -24,6 +23,8 @@ class WSManager:
         self.lock = threading.Lock()
         self.worker_task = None
         self.heartbeat_task = None
+        self.connected_flags: dict[WebSocket, bool] = {}  # track connection state
+        self.sent_candles: dict[WebSocket, dict[str, set[int]]] = {}
 
     # -------------------------
     # CONNECTION MANAGEMENT
@@ -35,12 +36,22 @@ class WSManager:
             if symbol not in self.clients:
                 self.clients[symbol] = set()
             self.clients[symbol].add(ws)
+            self.connected_flags[ws] = True  
+            if ws not in self.sent_candles:
+                self.sent_candles[ws] = {"5m": set(), "4h": set()}
+            num_clients = len(self.clients[symbol])
+            print(f"🟢 client-{num_clients} connected to candlews for {symbol}")
+        # NOTE: replay of candles disabled — backend no longer sends candle data
+        # This WS manager remains for backward compatibility but will not send
+        # any candle messages to clients. Frontend reads candles from CSV.
+
 
     def disconnect(self, ws: WebSocket, symbol: str):
         symbol = symbol.upper()
         with self.lock:
             if symbol in self.clients:
                 self.clients[symbol].discard(ws)
+                self.connected_flags[ws] = False 
                 num_clients = len(self.clients[symbol])
                 print(f"🔴 client-{num_clients} disconnected from candlews for {symbol}")
 
@@ -60,21 +71,13 @@ class WSManager:
             self.worker_task = loop.create_task(self._worker())
             print("🚀 WSManager worker started")
 
-        if self.heartbeat_task is None:
-            self.heartbeat_task = loop.create_task(self._heartbeat())
-            print("💓 WSManager heartbeat started")
+        # No heartbeat task required — backend will not send periodic heartbeats
 
     # -------------------------
     # HEARTBEAT
     # -------------------------
 
-    async def _heartbeat(self):
-        while True:
-            await asyncio.sleep(5)  # send heartbeat every 5 seconds
-            with self.lock:
-                for symbol, clients in self.clients.items():
-                    for ws in list(clients):
-                        asyncio.create_task(self._safe_send(ws, {"type": "heartbeat", "time": str(datetime.datetime.utcnow())}, symbol))
+    # Heartbeat disabled — removed periodic heartbeat sender
 
     async def _safe_send(self, ws: WebSocket, message: dict, symbol: str):
         try:
@@ -98,9 +101,13 @@ class WSManager:
         Sends message to ONLY relevant symbol clients.
         Expects message to have a 'symbol' key.
         """
+        # Drop any candle messages — frontend loads candles from CSV
+        if message.get("type") == "candle":
+            return
+
         symbol = message.get("symbol")
         if not symbol:
-            print("⚠️ No symbol in message, dropping")
+            print("⚠️ Invalid message, dropping")
             return
         
         symbol = symbol.upper()
@@ -112,6 +119,10 @@ class WSManager:
 
         for ws in clients:
             try:
+                if ws not in self.sent_candles:
+                    self.sent_candles[ws] = {"5m": set(), "4h": set()}
+
+                # send text to client
                 await ws.send_text(text)
             except Exception:
                 self.disconnect(ws, symbol)
