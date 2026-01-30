@@ -46,6 +46,7 @@ class PairState:
     # Buffers for incremental aggregation
     buffer_5m: List[dict] = field(default_factory=list)
     buffer_4h: List[dict] = field(default_factory=list)
+    leg_buffer_4h: List[dict] = field(default_factory=list)
     # -----------------------------
     # 5M STRUCTURE & SWINGS
     # -----------------------------

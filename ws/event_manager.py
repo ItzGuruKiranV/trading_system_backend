@@ -75,12 +75,12 @@ class EventManager:
 
         # 🔍 Proper debug logging (reflects REAL structure)
         evt_count = len(events)
-        print(f"[EVENT_BCAST] {symbol} {timeframe} -> {evt_count} events")
+        # print(f"[EVENT_BCAST] {symbol} {timeframe} -> {evt_count} events")
 
-        for e in events:
-            print(
-                f"   • type={e.get('type')} | id={e.get('id')} | time={e.get('time')}"
-            )
+        # for e in events:
+        #     print(
+        #         f"   • type={e.get('type')} | id={e.get('id')} | time={e.get('time')}"
+        #     )
 
         # Convert to text once
         text = json.dumps(message, default=str)

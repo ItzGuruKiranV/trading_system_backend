@@ -90,9 +90,13 @@ def plot_pois_debug(df: pd.DataFrame, pois: List[Dict], trend: str):
 def detect_pois_from_swing(
     ohlc_df: pd.DataFrame,
     trend: str,
+    pair: str,
     ob_multiplier: float = 1.8,
     liq_pullback_candles: int = 4,
 ) -> List[Dict]:
+    print("POI Detection Range:", pair)
+    print("Start:", ohlc_df.index.min())
+    print("End:", ohlc_df.index.max())
 
     df = ohlc_df[["open", "high", "low", "close"]].copy()
     df["range"] = df["high"] - df["low"]
@@ -300,6 +304,3 @@ def detect_pois_from_swing(
 
     #plot_pois_debug(df, pois, trend)
     return sort_pois_merged(pois)
-
-
-

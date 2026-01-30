@@ -13,16 +13,12 @@ from db.supabase_client import supabase
 
 from backend.engine1.registry import StateRegistry
 from backend.engine.poi_detection import detect_pois_from_swing 
-MAX_REPLAY = 1000  # Max candles to keep in replay buffer
-# Simulation config
+
+MAX_REPLAY = 1000 
 SIMULATE_REALTIME = True
-# If True, pause for `PAUSE_SECONDS` after every emitted event
 PAUSE_ON_EACH_EVENT = False
-# Specific dates (YYYY-MM-DD) to pause on when an event with that date is emitted
 PAUSE_ON_DATES: list[str] = []
-# seconds to pause when triggered
 PAUSE_SECONDS = 0.05
-# Global registry
 registry = StateRegistry()
 
 # ==================================================
@@ -40,20 +36,19 @@ class Candle:
 # TRADING ENGINE CLASS
 # ==================================================
 class TradingEngine:
+
     def __init__(self, symbol: str):
         self.symbol = symbol
-        self.state = registry.get_state(symbol)  # Get pair-specific state
+        self.state = registry.get_state(symbol) 
         self.running = False
         self.thread = None
         
         # Buffers
         self.bucket_5m = []
-        self.buffer_5m = []  # Holds completed 5M candles
-        self.buffer_5m_poi = []       # NEW: only for POI mapping (cleared after poi mapping)
-        self.leg_buffer_4h = []     # Holds 4H candles from BOS → pullback
-        # (replay buffers removed — frontend loads candles from CSV)
-        
-        # Load Config / State Defaults if needed (minimal reset logic)
+        self.buffer_5m = []   
+        self.buffer_5m_poi = []   
+        self.state.leg_buffer_4h = []     
+
         # If trend is NEUTRAL or bos_time is missing, we need to bootstrap it.
         if self.state.trend_4h == "NEUTRAL" or self.state.bos_time_4h is None:
             print(f"*** [BOOTSTRAP] Initializing state for {self.symbol}...")
@@ -115,20 +110,20 @@ class TradingEngine:
         self.state.trade_planned = False
         self.state.entry_filled = False
 
-    # def save_trade_to_db(self, trade_date, side, result, entry, exit_price, pnl):
-    #     data = {
-    #         "pair": self.symbol,
-    #         "trade_date": trade_date,
-    #         "side": side,
-    #         "result": result,
-    #         "entry": entry,
-    #         "exit": exit_price,
-    #         "pnl": pnl,
-    #     }
-    #     try:
-    #         supabase.table("backtest_trades").insert(data).execute()
-    #     except Exception as e:
-    #         print(f"[ERROR] DB Error for {self.symbol}: {e}")
+    def save_trade_to_db(self, trade_date, side, result, entry, exit_price, pnl):
+        data = {
+            "pair": self.symbol,
+            "trade_date": trade_date,
+            "side": side,
+            "result": result,
+            "entry": entry,
+            "exit": exit_price,
+            "pnl": pnl,
+        }
+        try:
+            supabase.table("backtest_trades").insert(data).execute()
+        except Exception as e:
+            print(f"[ERROR] DB Error for {self.symbol}: {e}")
 
     def run(self):
         """Main execution loop for this pair."""
@@ -136,15 +131,12 @@ class TradingEngine:
         print(f"Trading Agent - REALTIME MODE ({self.symbol})")
         print("=" * 60)
         
-        # Dynamic CSV Path Logic
-        # Resolve project root (assuming run1.py is in backend/)
+
         base_dir = Path(__file__).resolve().parent.parent
-        
         potential_paths = [
             base_dir / f"DAT_MT_{self.symbol}_M1_2022.csv",
             base_dir / f"HISTDATA_COM_MT_{self.symbol}_M12022/DAT_MT_{self.symbol}_M1_2022.csv"
         ]
-        
         print(f"[{self.symbol}] Checking CSV paths: {[str(p) for p in potential_paths]}")
         minute_csv_path = next((p for p in potential_paths if p.exists()), None)
         
@@ -162,7 +154,7 @@ class TradingEngine:
                 for row in reader:
                     if not self.running:
                         print(f"[STOP] Engine stopped for {self.symbol}")
-                        break
+                        return
 
                     if len(row) < 6:
                         continue
@@ -170,14 +162,18 @@ class TradingEngine:
                     date_str, time_str, o, h, l, c = row[:6]
                     try:
                         t = datetime.strptime(date_str + " " + time_str, "%Y.%m.%d %H:%M")
-                        
+
+                        # Pause on specific dates for debugging
+                        if t.month == 12 and t.day == 25:
+                            print("Reached Dec 25 — sleeping for 1 hour to keep backend alive...")
+                            time.sleep(3600)
                         # Smart Sleep: 
                         # - History: 2ms (Fast but stable for WebSockets)
                         # - Live: 50ms (Readable speed)
-                        if self.state.bos_time_4h and t > self.state.bos_time_4h:
-                            time.sleep(0.0001) 
-                        else:
-                            time.sleep(0.0001) 
+                        # if self.state.bos_time_4h and t > self.state.bos_time_4h:
+                        #     time.sleep(0.0001) 
+                        # else:
+                        #     time.sleep(0.0001) 
                         
                         self.state.last_candle_time = t
                             
@@ -199,8 +195,6 @@ class TradingEngine:
                             self.curr_5m_time = floored_5m_time
                         elif floored_5m_time == self.curr_5m_time:
                             self.bucket_5m.append(candle_1m)
-
-                        # New 5m window → finalize previous candle
                         else:
                             candle_5m = {
                                 "time": self.curr_5m_time,
@@ -232,7 +226,6 @@ class TradingEngine:
                             self.curr_5m_time = floored_5m_time
                             
                         # ---------------- 4H CANDLE ----------------
-                        # Only run if we have enough 5m candles
                         if self.buffer_5m:
                             last_5m_candle = self.buffer_5m[-1]
                             floored_4h_time = last_5m_candle["time"].replace(
@@ -271,21 +264,15 @@ class TradingEngine:
                                     #     "low": candle_4h["low"],
                                     #     "close": candle_4h["close"],
                                     # })
-                            
-                                # replay buffer disabled (frontend reads candles from CSV)
-                            
-                                # Reset for next 4h window
+                                                        
                                 self.curr_4h_time = floored_4h_time
                                 self.curr_4h_bucket = [last_5m_candle]
-                                self.leg_buffer_4h.append(candle_4h)
-                                # Clear 4h buffer
+                                self.state.leg_buffer_4h.append(candle_4h)
                                 self.buffer_5m.clear()
 
                                 # --------------------------------------------------
                                 # 3. 4H EVENT LOGIC (State Reconstruction)
                                 # --------------------------------------------------
-                                # We MUST process this logic even for history to rebuild 
-                                # leg_buffer_4h, candidate_highs, and counts.
                                 
                                 
                                 is_historical = self.state.bos_time_4h and candle_4h["time"] <= self.state.bos_time_4h
@@ -331,17 +318,43 @@ class TradingEngine:
                                                         }
                                                         self.send_event(event_payload)
 
+                                                # swing_time = self.state.swing_low_time
+
+                                                # if swing_time is not None:
+                                                #     self.state.leg_buffer_4h = [
+                                                #         c for c in self.state.leg_buffer_4h
+                                                #         if c["time"] >= swing_time
+                                                #     ]
+                                                # else:
+                                                #     print("[INFO] swing_low_time is None — keeping full leg_buffer_4h (seed phase)")
+
                                                 self.state.candidate_high = None
                                                 self.state.bearish_count = 0
-                                                print("leg buff", len(self.leg_buffer_4h))
-                                                #Call POI detection after pullback
-                                                swing_df = pd.DataFrame(self.leg_buffer_4h).set_index("time")
+                                                print("leg buff", len(self.state.leg_buffer_4h))
+                                                
+                                                # Call POI detection after pullback
+                                                # For BULLISH: keep leg candles from the swing low price -> end
+                                                swing_price = self.state.swing_low
+                                                start_idx = next(
+                                                    (
+                                                        i for i, c in enumerate(self.state.leg_buffer_4h)
+                                                        if (c.get("low") == swing_price) or (
+                                                            isinstance(c.get("low"), (int, float)) and isinstance(swing_price, (int, float)) and abs(c.get("low") - swing_price) < 1e-8
+                                                        )
+                                                    ),
+                                                    0,
+                                                )
+                                                sliced = self.state.leg_buffer_4h[start_idx:]
+                                                swing_df = pd.DataFrame(sliced).set_index("time")
+                                                self.state.leg_buffer_4h.clear()
                                                 print("swing df len", len(swing_df))
                                                 self.state.active_pois = detect_pois_from_swing(
                                                     ohlc_df=swing_df,
-                                                    trend=self.state.trend_4h
+                                                    trend=self.state.trend_4h,
+                                                    pair=self.symbol,
+
                                                 )
-                                                print(f"[DEBUG] DETECTED {len(self.state.active_pois)} POIs in swing leg")
+                                                # print(f"[DEBUG] DETECTED {len(self.state.active_pois)} POIs in swing leg")
                                             
 
                                                 liq_events = []
@@ -426,11 +439,13 @@ class TradingEngine:
                                                 self.reset_on_4h_structure()
                                                 
                                                 # Calculate new swing high and its time from the leg
-                                                if self.leg_buffer_4h:
-                                                    max_candle = max(self.leg_buffer_4h, key=lambda c: c["high"])
+                                                if self.state.leg_buffer_4h:
+                                                    max_candle = max(self.state.leg_buffer_4h, key=lambda c: c["high"])
                                                     self.state.swing_high = max_candle["high"]
                                                     self.state.swing_high_time = max_candle["time"]
+                                                self.state.swing_high= self.state.candidate_high
                                                 self.state.candidate_high = None
+                                                broken_level = self.state.swing_low
                                                 self.state.swing_low = None
                                                 self.state.candidate_low = candle_4h["low"]
                                                 self.state.trend_4h = "BEARISH"
@@ -439,7 +454,7 @@ class TradingEngine:
                                                 self.state.bullish_count = 0
                                                 self.state.bearish_count = 0
 
-                                                broken_level = self.state.swing_low
+                                                
                                                 if  not is_historical and broken_level is not None:
 
                                                     event_payload = {
@@ -457,7 +472,6 @@ class TradingEngine:
                                                     self.send_event(event_payload)
 
                                                 self.buffer_5m.clear()  
-                                                self.leg_buffer_4h.clear()
 
                                         if self.state.pullback_confirmed:
                                             if self.state.trend_4h == "BULLISH" and self.state.swing_high is not None and candle_4h["close"] > self.state.swing_high:
@@ -472,8 +486,8 @@ class TradingEngine:
                                                 
                                                 self.reset_on_4h_structure()                
                                                 # 🔹 Calculate new swing LOW from old leg
-                                                if self.leg_buffer_4h:
-                                                    min_candle = min(self.leg_buffer_4h, key=lambda c: c["low"])
+                                                if self.state.leg_buffer_4h:
+                                                    min_candle = min(self.state.leg_buffer_4h, key=lambda c: c["low"])
                                                     self.state.swing_low = min_candle["low"]
                                                     self.state.swing_low_time = min_candle["time"]
                                                 self.state.pullback_confirmed = False
@@ -497,8 +511,7 @@ class TradingEngine:
                                                     }
                                                     self.send_event(event_payload)
                                                     
-                                                self.leg_buffer_4h.clear()
-                                                self.buffer_5m.clear()
+                                                    self.buffer_5m.clear()
 
                                     elif self.state.trend_4h == "BEARISH":
                                         if self.state.candidate_low is None or candle_4h["low"] < self.state.candidate_low:
@@ -537,13 +550,36 @@ class TradingEngine:
                                                             ]
                                                         }
                                                     self.send_event(event_payload)
-                                                
-                                                print("leg buff", len(self.leg_buffer_4h))
-                                                swing_df = pd.DataFrame(self.leg_buffer_4h).set_index("time")
+                                                    swing_time = self.state.swing_high_time
+
+                                                # if swing_time is not None:
+                                                #     self.state.leg_buffer_4h = [
+                                                #         c for c in self.state.leg_buffer_4h
+                                                #         if c["time"] >= swing_time
+                                                #     ]
+                                                # else:
+                                                #     print("[INFO] swing_high_time is None — keeping full leg_buffer_4h (seed phase)")
+                                                                                                
+                                                print("leg buff", len(self.state.leg_buffer_4h))
+                                                # For BEARISH: keep leg candles from the swing high price -> end
+                                                swing_price = self.state.swing_high
+                                                start_idx = next(
+                                                    (
+                                                        i for i, c in enumerate(self.state.leg_buffer_4h)
+                                                        if (c.get("high") == swing_price) or (
+                                                            isinstance(c.get("high"), (int, float)) and isinstance(swing_price, (int, float)) and abs(c.get("high") - swing_price) < 1e-8
+                                                        )
+                                                    ),
+                                                    0,
+                                                )
+                                                sliced = self.state.leg_buffer_4h[start_idx:]
+                                                swing_df = pd.DataFrame(sliced).set_index("time")
+                                                self.state.leg_buffer_4h.clear()
                                                 print("swing df len", len(swing_df))
                                                 self.state.active_pois = detect_pois_from_swing(
                                                     ohlc_df=swing_df,
-                                                    trend="BEARISH"
+                                                    trend="BEARISH",
+                                                    pair=self.symbol,
                                                 )
                                                 print(f"[DEBUG] DETECTED {len(self.state.active_pois)} POIs in BEARISH 4H swing leg")
 
@@ -639,10 +675,11 @@ class TradingEngine:
                                                 self.reset_on_4h_structure()
                                                 
                                                 # Calculate new swing low and its time from the leg
-                                                if self.leg_buffer_4h:
-                                                    min_candle = min(self.leg_buffer_4h, key=lambda c: c["low"])
-                                                    self.state.swing_low = min_candle["low"]
-                                                    self.state.swing_low_time = min_candle["time"]
+                                                # if self.state.leg_buffer_4h:
+                                                #     min_candle = min(self.state.leg_buffer_4h, key=lambda c: c["low"])
+                                                #     self.state.swing_low = min_candle["low"]
+                                                #     self.state.swing_low_time = min_candle["time"]
+                                                self.state.swing_low=self.state.candidate_low
                                                 self.state.candidate_high = candle_4h["high"]
                                                 self.state.trend_4h = "BULLISH"
                                                 self.state.pullback_confirmed = False
@@ -667,7 +704,6 @@ class TradingEngine:
                                                     self.send_event(event_payload)
 
                                                 self.buffer_5m.clear()  
-                                                self.leg_buffer_4h.clear()
 
                                         if self.state.pullback_confirmed:
                                             if self.state.trend_4h == "BEARISH" and self.state.swing_low is not None and candle_4h["close"] < self.state.swing_low:
@@ -681,8 +717,9 @@ class TradingEngine:
                                                 
                                                 self.reset_on_4h_structure()
                                                 
-                                                if self.leg_buffer_4h:
-                                                    max_candle = max(self.leg_buffer_4h, key=lambda c: c["high"])
+                                                if self.state.leg_buffer_4h:
+                                                    
+                                                    max_candle = max(self.state.leg_buffer_4h, key=lambda c: c["high"])
                                                     self.state.swing_high = max_candle["high"]
                                                     self.state.swing_high_time = max_candle["time"]
                                                 self.state.pullback_confirmed = False
@@ -703,8 +740,7 @@ class TradingEngine:
                                                     ]
                                                 }
                                                 self.send_event(event_payload)
-                                                    
-                                                self.leg_buffer_4h.clear()
+                                             
                                                 self.buffer_5m.clear()
 
                             # --------------------------------------------------
@@ -716,6 +752,8 @@ class TradingEngine:
 
                             bull_candle_5m = candle_5m["close"] > candle_5m["open"]
                             bear_candle_5m = candle_5m["close"] < candle_5m["open"]
+
+
                             if self.state.trend_4h=="BULLISH":
                                 if self.state.candidate_low_5m is None:
                                     self.state.market_trend_5m="BEARISH"
@@ -806,6 +844,7 @@ class TradingEngine:
                                                 self.state.candidate_low_5m= candle_5m["low"]
                                                 print(f"[{self.symbol}] [START] 5M BEARISH CHOCH @ {candle_5m['time']} | Broken Low: {self.state.swing_low_5m}")
                                                 self.state.buffer_5m_sl.clear()
+                              
                                 # --------------------------------------------------
                                 # 5M POI TAP CHECK (Realtime)
                                 # --------------------------------------------------
@@ -864,7 +903,7 @@ class TradingEngine:
                                             else:
                                                 invalidation_level = (active_poi["price"] + self.state.swing_low) / 2
                                     
-
+                                
                                 if not self.state.choch_5m and self.state.active_poi :
                                     if candle_5m["low"]<= invalidation_level:
                                         self.state.active_poi=None
@@ -1394,7 +1433,6 @@ class EngineManager:
             if symbol in self.engines:
                 print(f"[STOP] Stopping Engine for {symbol}...")
                 self.engines[symbol].stop()
-                # Only join if we are NOT in that thread
                 if threading.current_thread() != self.threads.get(symbol):
                     self.threads[symbol].join()
                 
@@ -1424,16 +1462,11 @@ def main():
     print("🔌 Initializing Event & WS Managers with FastAPI loop...")
     ws_manager.set_loop(event_loop)
     event_manager.set_loop(event_loop)
-
-    # Start default pair
     manager.start_engine("EURUSD")
-
-    # Keep main thread alive
     while True:
         time.sleep(1)
 
 if __name__ == "__main__":
-    # For testing direct run
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     event_loop = loop
