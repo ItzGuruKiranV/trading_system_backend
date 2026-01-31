@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime , timezone
 from pathlib import Path
 import csv
 import pandas as pd
@@ -52,6 +52,7 @@ class TradingEngine:
         # If trend is NEUTRAL or bos_time is missing, we need to bootstrap it.
         if self.state.trend_4h == "NEUTRAL" or self.state.bos_time_4h is None:
             print(f"*** [BOOTSTRAP] Initializing state for {self.symbol}...")
+            #print()
             self.state.pullback_pct = 0.35
             self.state.min_pullback_candles = 10
             
@@ -138,6 +139,7 @@ class TradingEngine:
             base_dir / f"HISTDATA_COM_MT_{self.symbol}_M12022/DAT_MT_{self.symbol}_M1_2022.csv"
         ]
         print(f"[{self.symbol}] Checking CSV paths: {[str(p) for p in potential_paths]}")
+        #print()
         minute_csv_path = next((p for p in potential_paths if p.exists()), None)
         
         if not minute_csv_path:
@@ -298,6 +300,7 @@ class TradingEngine:
                                                 choch_5m=False
                                                 self.state.pullback_time = candle_4h["time"]
                                                 print(f"\n[PULLBACK] [4H BULLISH PB] CONFIRMED @ {self.state.pullback_time}")
+                                                #print()
                                                 self.state.h4_structure_event=None
                                                 self.state.swing_high = self.state.candidate_high
                                                 self.state.swing_high_time = self.state.candidate_high_time
@@ -331,6 +334,7 @@ class TradingEngine:
                                                 self.state.candidate_high = None
                                                 self.state.bearish_count = 0
                                                 print("leg buff", len(self.state.leg_buffer_4h))
+                                                #print()
                                                 
                                                 # Call POI detection after pullback
                                                 # For BULLISH: keep leg candles from the swing low price -> end
@@ -348,6 +352,7 @@ class TradingEngine:
                                                 swing_df = pd.DataFrame(sliced).set_index("time")
                                                 self.state.leg_buffer_4h.clear()
                                                 print("swing df len", len(swing_df))
+                                                #print()
                                                 self.state.active_pois = detect_pois_from_swing(
                                                     ohlc_df=swing_df,
                                                     trend=self.state.trend_4h,
@@ -429,6 +434,7 @@ class TradingEngine:
                                             if self.state.swing_low and candle_4h["close"] < self.state.swing_low:
                                                 if not is_historical:
                                                     print(f"[{self.symbol}] [CHOCH] BEARISH @ {candle_4h['time']}")
+                                                    #print()
                                                 self.state.bos_time_4h = candle_4h["time"]
                                                 self.state.choch_level_4h = candle_4h["close"]
                                                 self.state.h4_structure_event = "CHOCH"
@@ -446,7 +452,6 @@ class TradingEngine:
                                                 self.state.swing_high= self.state.candidate_high
                                                 self.state.candidate_high = None
                                                 broken_level = self.state.swing_low
-                                                self.state.swing_low = None
                                                 self.state.candidate_low = candle_4h["low"]
                                                 self.state.trend_4h = "BEARISH"
                                                 self.state.pullback_confirmed = False
@@ -464,7 +469,7 @@ class TradingEngine:
                                                             {
                                                                 "id": f"4H_CHOCH_{candle_4h['time'].strftime('%Y%m%d_%H%M')}",
                                                                 "type": "CHOCH",
-                                                                "broken_level": self.state.swing_high,
+                                                                "broken_level": self.state.swing_low,
                                                                 "time": broken_swing_time.isoformat()
                                                             }
                                                         ]
@@ -477,6 +482,7 @@ class TradingEngine:
                                             if self.state.trend_4h == "BULLISH" and self.state.swing_high is not None and candle_4h["close"] > self.state.swing_high:
                                                 if not is_historical:
                                                     print(f"[{self.symbol}] [BOS] BULLISH @ {candle_4h['time']}")
+                                                    #print()
                                                 self.state.bos_level_4h = candle_4h["close"]
                                                 self.state.bos_time_4h= candle_4h["time"]
                                                 self.state.h4_structure_event="BOS"
@@ -530,6 +536,7 @@ class TradingEngine:
                                                 self.state.pullback_time = candle_4h["time"]
                                                 if not is_historical:
                                                     print(f"\n[PULLBACK] [4H BEARISH PB] CONFIRMED @ {self.state.pullback_time}")
+                                                    #print()
                                                 self.state.h4_structure_event=None
                                                 self.state.swing_low = self.state.candidate_low
                                                 self.state.swing_low_time = self.state.candidate_low_time
@@ -561,6 +568,7 @@ class TradingEngine:
                                                 #     print("[INFO] swing_high_time is None — keeping full leg_buffer_4h (seed phase)")
                                                                                                 
                                                 print("leg buff", len(self.state.leg_buffer_4h))
+                                                #print()
                                                 # For BEARISH: keep leg candles from the swing high price -> end
                                                 swing_price = self.state.swing_high
                                                 start_idx = next(
@@ -576,12 +584,14 @@ class TradingEngine:
                                                 swing_df = pd.DataFrame(sliced).set_index("time")
                                                 self.state.leg_buffer_4h.clear()
                                                 print("swing df len", len(swing_df))
+                                                #print()
                                                 self.state.active_pois = detect_pois_from_swing(
                                                     ohlc_df=swing_df,
                                                     trend="BEARISH",
                                                     pair=self.symbol,
                                                 )
                                                 print(f"[DEBUG] DETECTED {len(self.state.active_pois)} POIs in BEARISH 4H swing leg")
+                                                #print()
 
                                                 liq_events = []
                                                 ob_events = []
@@ -665,6 +675,7 @@ class TradingEngine:
                                         if self.state.pullback_confirmed:
                                             if self.state.swing_high and candle_4h["close"] > self.state.swing_high:
                                                 print(f"[{self.symbol}] [CHOCH] BULLISH @ {candle_4h['time']}")
+                                                #print()
                                                 self.state.bos_time_4h = candle_4h["time"]
                                                 self.state.choch_level_4h = candle_4h["close"]
                                                 self.state.h4_structure_event="CHOCH"
@@ -708,6 +719,7 @@ class TradingEngine:
                                         if self.state.pullback_confirmed:
                                             if self.state.trend_4h == "BEARISH" and self.state.swing_low is not None and candle_4h["close"] < self.state.swing_low:
                                                 print(f"[{self.symbol}] [BOS] BEARISH @ {candle_4h['time']}")
+                                                #print()
                                                 self.state.bos_level_4h = candle_4h["close"]
                                                 self.state.bos_time_4h = candle_4h["time"]
                                                 self.state.h4_structure_event="BOS"
@@ -767,13 +779,15 @@ class TradingEngine:
                                 if self.state.market_trend_5m=="BEARISH":
                                     if bull_candle_5m and (self.state.pullback_count_5m == 0 or self.state.pullback_count_5m == 1):
                                         self.state.pullback_count_5m += 1
+                                   
+                                    retrace = (candle_5m["high"] - self.state.candidate_low_5m) / max(self.state.swing_high_5m - self.state.candidate_low_5m, 1e-9)
+                                    valid_pullback_5m = self.state.pullback_count_5m >= 2 or retrace >= 0.75
 
-                                    if candle_5m["low"] < self.state.candidate_low_5m and self.state.pullback_count_5m<2:
+                                    if candle_5m["low"] < self.state.candidate_low_5m and not valid_pullback_5m:
                                         self.state.candidate_low_5m = candle_5m["low"]
                                         self.state.pullback_count_5m = 0
 
-                                    retrace = (candle_5m["high"] - self.state.candidate_low_5m) / max(self.state.swing_high_5m - self.state.candidate_low_5m, 1e-9)
-                                    valid_pullback_5m = self.state.pullback_count_5m >= 2 or retrace >= 0.75
+
 
                                     if valid_pullback_5m:
                                         self.state.swing_low_5m=self.state.candidate_low_5m
@@ -790,31 +804,34 @@ class TradingEngine:
                                             self.state.swing_high_5m_time = swing_candle["time"] 
                                             self.state.protected_5m_point = self.state.swing_high_5m
                                             self.state.protected_5m_time  = self.state.swing_high_5m_time  
-                                            
+                                            # print(f"[{self.symbol}] 5M NORMAL BOS @ {candle_5m['time']} | New Swing High: {self.state.swing_high_5m}")
+                                            #print()
                                             self.state.candidate_low_5m = candle_5m["low"]
                                             self.state.pullback_count_5m=0
                                             self.state.buffer_5m_sh.clear()
 
                                             #CHOCH 5m
-                                            if candle_5m["high"] > self.state.swing_high_5m :
-                                                self.state.swing_low_5m = self.state.candidate_low_5m
-                                                self.state.market_trend_5m="BULLISH"
-                                                self.state.pullback_count_5m=0
-                                                self.state.candidate_high_5m= candle_5m["high"]
-                                                print(f"[{self.symbol}] [START] 5M BULLISH CHOCH @ {candle_5m['time']} | Broken High: {self.state.swing_high_5m}")
-                                                self.state.buffer_5m_sh.clear()
+                                        if candle_5m["high"] > self.state.swing_high_5m :
+                                            self.state.swing_low_5m = self.state.candidate_low_5m
+                                            self.state.market_trend_5m="BULLISH"
+                                            self.state.pullback_count_5m=0
+                                            self.state.candidate_high_5m= candle_5m["high"]
+                                            # print(f"[{self.symbol}] [START] 5M NORMAL CHOCH @ {candle_5m['time']} | Broken High: {self.state.swing_high_5m}")
+                                            #print()
+                                            self.state.buffer_5m_sh.clear()
+
                                 if self.state.market_trend_5m=="BULLISH":
                                     if bear_candle_5m and (self.state.pullback_count_5m == 0 or self.state.pullback_count_5m == 1):
                                         self.state.pullback_count_5m += 1
-
-                                    if candle_5m["high"] > self.state.candidate_high_5m and self.state.pullback_count_5m<2:
-                                        self.state.candidate_high_5m = candle_5m["high"]
-                                        self.state.pullback_count_5m = 0
 
                                     retrace=(self.state.candidate_high_5m - candle_5m["low"]) / max(
                                                     self.state.candidate_high_5m - self.state.swing_low_5m, 1e-9
                                                 )
                                     valid_pullback_5m = self.state.pullback_count_5m >= 2 or retrace >= 0.99
+
+                                    if candle_5m["high"] > self.state.candidate_high_5m and not valid_pullback_5m:
+                                        self.state.candidate_high_5m = candle_5m["high"]
+                                        self.state.pullback_count_5m = 0
                                     
                                     if valid_pullback_5m:
                                         self.state.swing_high_5m=self.state.candidate_high_5m
@@ -831,36 +848,41 @@ class TradingEngine:
                                             self.state.swing_low_5m_time = swing_candle["time"]
                                             self.state.protected_5m_point = self.state.swing_low_5m
                                             self.state.protected_5m_time = self.state.swing_low_5m_time
+                                            # print(f"[{self.symbol}] 5M NORMAL BOS @ {candle_5m['time']} | New Swing Low: {self.state.swing_low_5m}")
+                                            #print()
 
                                             self.state.candidate_high_5m = candle_5m["high"]
                                             self.state.pullback_count_5m = 0
                                             self.state.buffer_5m_sl.clear()
 
-                                            #CHOCH 5m
-                                            if candle_5m["low"] > self.state.swing_low_5m :
-                                                self.state.swing_high_5m = self.state.candidate_high_5m
-                                                self.state.market_trend_5m="BEARISH"
-                                                self.state.pullback_count_5m=0
-                                                self.state.candidate_low_5m= candle_5m["low"]
-                                                print(f"[{self.symbol}] [START] 5M BEARISH CHOCH @ {candle_5m['time']} | Broken Low: {self.state.swing_low_5m}")
-                                                self.state.buffer_5m_sl.clear()
+                                        #CHOCH 5m
+                                        if candle_5m["low"] > self.state.swing_low_5m :
+                                            self.state.swing_high_5m = self.state.candidate_high_5m
+                                            self.state.market_trend_5m="BEARISH"
+                                            self.state.pullback_count_5m=0
+                                            self.state.candidate_low_5m= candle_5m["low"]
+                                            # print(f"[{self.symbol}] [START] 5M NORMAL CHOCH @ {candle_5m['time']} | Broken Low: {self.state.swing_low_5m}")
+                                            #print()
+                                            self.state.buffer_5m_sl.clear()
                               
                                 # --------------------------------------------------
                                 # 5M POI TAP CHECK (Realtime)
                                 # --------------------------------------------------
                                 if self.state.mapped_pois and not self.state.poi_tapped and self.state.active_poi is None:
-
+                                    
+                                    # Check POI TAP omly ONLY IF POI IS VALID
                                     for poi in self.state.mapped_pois:
                                         if not poi["if_valid"]:
                                             continue
 
                                         if poi["type"] == "OB":
-                                            if candle_5m["low"] <= poi["price_high"] and candle_5m["high"] >= poi["price_low"]:
+                                            if candle_5m["low"] <= poi["price_high"] :
                                                 self.state.poi_tapped = True
                                                 self.state.active_poi = poi
                                                 self.state.poi_tapped_level = candle_5m["low"]
                                                 self.state.poi_tapped_time = candle_5m["time"]
                                                 print(f"[TARGET] POI TAPPED (OB) @ {candle_5m['time']}")
+                                                #print()
                                                 poi["if_valid"]=False
                                                 break
 
@@ -871,14 +893,16 @@ class TradingEngine:
                                                 self.state.poi_tapped_level = candle_5m["low"]
                                                 self.state.poi_tapped_time = candle_5m["time"]
                                                 print(f"[TARGET] POI TAPPED (LIQ) @ {candle_5m['time']}")
+                                                #print()
                                                 poi["if_valid"]=False
                                                 break
 
 
                                     if self.state.poi_tapped:
                                         active_poi = self.state.active_poi
-
                                         next_poi = None
+
+                                        # FIND NEXT VALID POI
                                         for poi in self.state.mapped_pois:
                                                 if not poi["if_valid"]:
                                                     continue
@@ -887,6 +911,7 @@ class TradingEngine:
                                                     break  
 
                                         p0_type = active_poi["type"]
+
                                         if next_poi:
                                             p1_type = next_poi["type"]
                                             if p0_type == "OB" and p1_type == "OB":
@@ -902,29 +927,35 @@ class TradingEngine:
                                                 invalidation_level = (active_poi["price_high"] + self.state.swing_low) / 2
                                             else:
                                                 invalidation_level = (active_poi["price"] + self.state.swing_low) / 2
-                                    
-                                
+
+                                # --------------------------------------------------    
+                                # 5M CHOCH CHECK & TRADE SETUP (Realtime)
+                                # --------------------------------------------------   
                                 if not self.state.choch_5m and self.state.active_poi :
                                     if candle_5m["low"]<= invalidation_level:
                                         self.state.active_poi=None
                                         self.state.poi_tapped=False
+                                        print("invalidation level hit, removing active poi")
                                         continue
+
                                     if candle_5m["high"] > self.state.swing_high_5m :
                                         self.state.choch_5m=True
-                                        self.state.trade_active 
+                                        self.state.trade_active = True
                                         self.state.current_poi=self.state.active_poi
                                         self.state.active_poi=None
                                         self.state.poi_tapped=False
+                                        print(f"[{self.symbol}] [START] 5M trade CHOCH @ {self.state.swing_high_5m_time} | Broken High: {self.state.swing_high_5m}")
+                                        #print()
                                         # 📡 Broadcast 5M CHOCH
                                         event_payload = {
                                             "symbol": self.symbol,
                                             "timeframe": "5m",
                                             "events": [
                                                 {
-                                                    "id": f"5m_CHOCH_{candle_5m['time'].strftime('%Y%m%d_%H%M')}",
+                                                    "id": f"5m_CHOCH_{self.state.swing_high_5m_time.strftime('%Y%m%d_%H%M')}",
                                                     "type": "CHOCH",
                                                     "broken_level": self.state.swing_high_5m,
-                                                    "time": candle_5m["time"].isoformat()
+                                                    "time": self.state.swing_high_5m_time.isoformat()
                                                 }
                                             ]
                                         }
@@ -932,9 +963,7 @@ class TradingEngine:
                                     # --------------------------------------------------
                                     # TRADE SETUP (CHOCH + POI)
                                     # --------------------------------------------------
-                                    if (
-                                        self.state.choch_5m
-                                    ):
+                                    if self.state.choch_5m and self.state.trade_active and not self.state.trade_planned:
                                         self.state.choch_5m=False            
                                         if self.state.trend_4h == "BULLISH":
                                             range_high = self.state.swing_high_5m          # CHOCH candle high
@@ -943,6 +972,7 @@ class TradingEngine:
 
                                         # Safety check
                                         if range_high is None or range_low is None:
+                                            print("Invalid range for trade setup, skipping...")
                                             continue
 
                                         entry = (range_high + range_low) / 2
@@ -972,7 +1002,7 @@ class TradingEngine:
                                             "planned_time": candle_5m["time"],
                                             "status": "PLANNED",
                                         }
-
+                                        
                                         self.state.trade_planned = True
 
                                         ts_str = candle_5m['time'].strftime('%Y%m%d_%H%M')
@@ -1017,6 +1047,9 @@ class TradingEngine:
                                         self.send_event(plan_event)
 
                                         print(f"[{self.symbol}] [START] TRADE PLANNED & STORED")
+                                        #print()
+                                        print("Trade Details:", self.state.trade)
+                                        #print()
 
                                 # --------------------------------------------------
                                 # TRADE MANAGEMENT (BUY ONLY - Realtime 5M)
@@ -1083,13 +1116,13 @@ class TradingEngine:
                                     if bear_candle_5m and (self.state.pullback_count_5m == 0 or self.state.pullback_count_5m == 1):
                                         self.state.pullback_count_5m += 1
 
-                                    if candle_5m["high"] > self.state.candidate_high_5m and self.state.pullback_count_5m < 2:
-                                        self.state.candidate_high_5m = candle_5m["high"]
-
-                                        self.state.pullback_count_5m = 0
-
                                     retrace = (self.state.candidate_high_5m - candle_5m["low"]) / max(self.state.candidate_high_5m - self.state.swing_low_5m, 1e-9)
                                     valid_pullback_5m = self.state.pullback_count_5m >= 2 or retrace >= 0.75
+
+                                    if candle_5m["high"] > self.state.candidate_high_5m and not valid_pullback_5m:
+                                        self.state.candidate_high_5m = candle_5m["high"]
+                                        self.state.pullback_count_5m = 0
+
 
                                     if valid_pullback_5m:
                                         self.state.swing_high_5m=self.state.candidate_high_5m
@@ -1100,34 +1133,39 @@ class TradingEngine:
                                                 self.state.buffer_5m_sl,
                                                 key=lambda c: c["low"]
                                             )
+
                                             self.state.swing_low_5m = swing_candle["low"]
                                             self.state.swing_low_5m_time = swing_candle["time"]
                                             self.state.protected_5m_point = self.state.swing_low_5m
                                             self.state.protected_5m_time = self.state.swing_low_5m_time
-
+                                            # print(f"[{self.symbol}] 5M NORMAL BOS @ {candle_5m['time']} | New Swing Low: {self.state.swing_low_5m}")
+                                            #print()
                                             self.state.candidate_high_5m = candle_5m["high"]
                                             self.state.pullback_count_5m = 0
                                             self.state.buffer_5m_sl.clear()
 
-                                            # CHOCH 5m (BEARISH VERSION)
-                                            if candle_5m["low"] < self.state.swing_low_5m:
-                                                self.state.swing_high_5m = self.state.candidate_high_5m
-                                                self.state.market_trend_5m = "BEARISH"
-                                                self.state.pullback_count_5m = 0
-                                                self.state.candidate_low_5m = candle_5m["low"]
-                                                print(f"[{self.symbol}] [START] 5M BEARISH CHOCH @ {candle_5m['time']} | Broken Low: {self.state.swing_low_5m}")
-                                                self.state.buffer_5m_sl.clear()
+                                        # CHOCH 5m 
+                                        if candle_5m["low"] < self.state.swing_low_5m:
+                                            self.state.swing_high_5m = self.state.candidate_high_5m
+                                            self.state.market_trend_5m = "BEARISH"
+                                            self.state.pullback_count_5m = 0
+                                            self.state.candidate_low_5m = candle_5m["low"]
+                                            # print(f"[{self.symbol}]  5M NORMAL CHOCH @ {candle_5m['time']} | Broken Low: {self.state.swing_low_5m}")
+                                            #print()
+                                            self.state.buffer_5m_sl.clear()
 
                                 if self.state.market_trend_5m == "BEARISH":
                                     if bull_candle_5m and (self.state.pullback_count_5m == 0 or self.state.pullback_count_5m == 1):
                                         self.state.pullback_count_5m += 1
 
-                                    if candle_5m["low"] < self.state.candidate_low_5m and self.state.pullback_count_5m < 2:
+                                    retrace = (candle_5m["high"] - self.state.candidate_low_5m) / max(self.state.swing_high_5m - self.state.candidate_low_5m, 1e-9)
+                                    valid_pullback_5m = self.state.pullback_count_5m >= 2 or retrace >= 0.99
+
+                                    if candle_5m["low"] < self.state.candidate_low_5m and not valid_pullback_5m:
                                         self.state.candidate_low_5m = candle_5m["low"]
                                         self.state.pullback_count_5m = 0
 
-                                    retrace = (candle_5m["high"] - self.state.candidate_low_5m) / max(self.state.swing_high_5m - self.state.candidate_low_5m, 1e-9)
-                                    valid_pullback_5m = self.state.pullback_count_5m >= 2 or retrace >= 0.99
+
 
                                     if valid_pullback_5m:
                                         self.state.swing_low_5m=self.state.candidate_low_5m
@@ -1144,19 +1182,22 @@ class TradingEngine:
                                             self.state.swing_high_5m_time = swing_candle["time"]
                                             self.state.protected_5m_point = self.state.swing_high_5m
                                             self.state.protected_5m_time = self.state.swing_high_5m_time
+                                            # print(f"[{self.symbol}] 5M NORMAL BOS @ {candle_5m['time']} | New Swing High: {self.state.swing_high_5m}")
+                                            #print()
 
                                             self.state.candidate_low_5m = candle_5m["low"]
                                             self.state.pullback_count_5m = 0
                                             self.state.buffer_5m_sh.clear()
 
-                                            # CHOCH 5m (BEARISH VERSION)
-                                            if candle_5m["high"] > self.state.swing_high_5m:
-                                                self.state.swing_low_5m = self.state.candidate_low_5m
-                                                self.state.market_trend_5m = "BULLISH"
-                                                self.state.pullback_count_5m = 0
-                                                self.state.candidate_high_5m = candle_5m["high"]
-                                                print(f"[{self.symbol}] [START] 5M BULLISH CHOCH @ {candle_5m['time']} | Broken High: {self.state.swing_high_5m}")
-                                                self.state.buffer_5m_sh.clear()
+                                        # CHOCH 5m (BEARISH VERSION)
+                                        if candle_5m["high"] > self.state.swing_high_5m:
+                                            self.state.swing_low_5m = self.state.candidate_low_5m
+                                            self.state.market_trend_5m = "BULLISH"
+                                            self.state.pullback_count_5m = 0
+                                            self.state.candidate_high_5m = candle_5m["high"]
+                                            # print(f"[{self.symbol}] 5M NORMAL CHOCH @ {candle_5m['time']} | Broken High: {self.state.swing_high_5m}")
+                                            #print()
+                                            self.state.buffer_5m_sh.clear()
 
                                 # --------------------------------------------------
                                 # 5M POI TAP CHECK (MIRRORED FOR BEARISH)
@@ -1174,6 +1215,7 @@ class TradingEngine:
                                                 self.state.poi_tapped_level = candle_5m["high"]  # MIRRORED: Use high instead of low
                                                 self.state.poi_tapped_time = candle_5m["time"]
                                                 print(f"[TARGET] POI TAPPED (OB) @ {candle_5m['time']}")
+                                                #print()
                                                 poi["if_valid"] = False
                                                 break
 
@@ -1185,6 +1227,7 @@ class TradingEngine:
                                                 self.state.poi_tapped_level = candle_5m["high"]  # MIRRORED: Use high instead of low
                                                 self.state.poi_tapped_time = candle_5m["time"]
                                                 print(f"[TARGET] POI TAPPED (LIQ) @ {candle_5m['time']}")
+                                                #print()
                                                 poi["if_valid"] = False
                                                 break
 
@@ -1217,11 +1260,15 @@ class TradingEngine:
                                             else:
                                                 invalidation_level = (active_poi["price"] + self.state.swing_high) / 2
 
+                                # --------------------------------------------------    
+                                # 5M CHOCH CHECK & TRADE SETUP (MIRRORED FOR BEARISH)  
+                                # --------------------------------------------------
                                 if not self.state.choch_5m and self.state.active_poi:
                                     # MIRRORED: Check if price goes above invalidation level
                                     if candle_5m["high"] >= invalidation_level:
                                         self.state.active_poi = None
                                         self.state.poi_tapped = False
+                                        print("invalidation level hit, removing active poi")
                                         continue
                                     
                                     # MIRRORED: For BEARISH, check BEARISH CHOCH (price breaks below swing_low)
@@ -1231,6 +1278,8 @@ class TradingEngine:
                                         self.state.current_poi=self.state.active_poi
                                         self.state.active_poi = None
                                         self.state.poi_tapped = False
+                                        print(f"[{self.symbol}] [START] 5M trade BEARISH CHOCH @ {self.state.swing_low_5m_time} | Broken Low: {self.state.swing_low_5m}")
+                                        #print()
                                         
                                         # 📡 Broadcast 5M CHOCH (BEARISH VERSION)
                                         event_payload = {
@@ -1238,11 +1287,10 @@ class TradingEngine:
                                             "timeframe": "5m",
                                             "events": [
                                                 {
-                                                    "id": f"5m_CHOCH_{candle_5m['time'].strftime('%Y%m%d_%H%M')}",
+                                                    "id": f"5m_CHOCH_{self.state.swing_low_5m_time.strftime('%Y%m%d_%H%M')}",
                                                     "type": "CHOCH",
                                                     "broken_level": self.state.swing_low_5m,  # MIRRORED: Use low instead of high
-                                                    "direction": "BEARISH",
-                                                    "time": candle_5m["time"].isoformat()
+                                                    "time": self.state.swing_low_5m_time.isoformat()
                                                 }
                                             ]
                                         }
@@ -1251,7 +1299,7 @@ class TradingEngine:
                                     # --------------------------------------------------
                                     # TRADE SETUP (CHOCH + POI) - MIRRORED FOR BEARISH
                                     # --------------------------------------------------
-                                    if self.state.choch_5m:
+                                    if self.state.choch_5m and self.state.trade_active and not self.state.trade_planned:
                                         self.state.choch_5m = False
                         
                                         if self.state.trend_4h == "BEARISH":  # CHANGED TO BEARISH
@@ -1336,6 +1384,9 @@ class TradingEngine:
                                         self.send_event(plan_event)
 
                                         print(f"[{self.symbol}] [START] TRADE PLANNED & STORED")
+                                        #print()
+                                        print("Trade Details:", self.state.trade)
+                                        #print()
 
                                 # --------------------------------------------------
                                 # TRADE MANAGEMENT (SELL ONLY - Realtime 5M) - MIRRORED
