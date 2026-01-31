@@ -56,7 +56,9 @@ class PairState:
     swing_low_5m_time: Optional[datetime] = None
 
     candidate_high_5m: Optional[float] = None
+    candidate_high_5m_time: Optional[datetime] = None
     candidate_low_5m: Optional[float] = None
+    candidate_low_5m_time: Optional[datetime] = None
     pullback_count_5m: int = 0
 
     buffer_5m_sh: List[dict] = field(default_factory=list)  # swing high / low buffer
