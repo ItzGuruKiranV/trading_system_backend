@@ -176,7 +176,7 @@ class TradingEngine:
                         t = datetime.strptime(date_str + " " + time_str, "%Y.%m.%d %H:%M")
 
                         # Pause on specific dates for debugging
-                        if t.month == 2 and t.day == 5:
+                        if t.month == 4 and t.day == 5:
                             print("Reached Dec 25 — sleeping for 1 hour to keep backend alive...")
                             time.sleep(3600)
                         # Smart Sleep: 
@@ -1164,7 +1164,7 @@ class TradingEngine:
                                             "timeframe": "5m",
                                             "events": [
                                                 {
-                                                    "id": f"5m_RETR_{ts_str}",
+                                                    "id": f"5m_TRADE_{ts_str}",
                                                     "type": "TRADE_PLAN",
                                                     "plan_direction": "LONG" if direction == "BUY" else "SHORT",
                                                     "SL": float(stop_loss),
@@ -1604,7 +1604,7 @@ class TradingEngine:
                                             "timeframe": "5m",
                                             "events": [
                                                 {
-                                                    "id": f"5m_RETR_{ts_str}",
+                                                    "id": f"5m_TRADE_{ts_str}",
                                                     "type": "TRADE_PLAN",
                                                     "plan_direction": "SHORT",  # MIRRORED: SHORT instead of LONG
                                                     "SL": float(stop_loss),
