@@ -79,6 +79,7 @@ class TradingEngine:
             self.state.candidate_high_5m_time = None
             self.state.candidate_low_5m = None
             self.state.candidate_low_5m_time = None
+            self.state.pullback_confirmed_5m = False
             self.state.pullback_confirmed = False
             self.state.pullback_time = None
             self.state.bearish_count = 0
@@ -111,6 +112,7 @@ class TradingEngine:
         self.state.pullback_count_5m = 0
         self.state.market_trend_5m = None
         self.state.choch_5m = False
+        self.state.pullback_confirmed_5m = False
 
         self.state.buffer_5m_sh.clear()
         self.state.buffer_5m_sl.clear()
@@ -202,6 +204,7 @@ class TradingEngine:
                             microsecond=0
                         
                         )
+                        new_5m_candle = False
                         if not self.bucket_5m:
                             self.bucket_5m.append(candle_1m)
                             self.curr_5m_time = floored_5m_time
@@ -236,9 +239,10 @@ class TradingEngine:
                             self.bucket_5m.clear()
                             self.bucket_5m.append(candle_1m)
                             self.curr_5m_time = floored_5m_time
+                            new_5m_candle = True
                             
                         # ---------------- 4H CANDLE ----------------
-                        if self.buffer_5m:
+                        if new_5m_candle and self.buffer_5m:
                             last_5m_candle = self.buffer_5m[-1]
                             floored_4h_time = last_5m_candle["time"].replace(
                                 hour=(last_5m_candle["time"].hour // 4) * 4,
@@ -808,20 +812,26 @@ class TradingEngine:
                                     continue
 
                                 if self.state.market_trend_5m=="BEARISH":
-                                    if bull_candle_5m and (self.state.pullback_count_5m == 0 or self.state.pullback_count_5m == 1):
+                                    if bull_candle_5m and (self.state.pullback_count_5m >= 0 or self.state.pullback_count_5m < 5):
                                         self.state.pullback_count_5m += 1
                                    
                                     retrace = (candle_5m["high"] - self.state.candidate_low_5m) / max(self.state.swing_high_5m - self.state.candidate_low_5m, 1e-9)
-                                    valid_pullback_5m = self.state.pullback_count_5m >= 2 or retrace >= 0.75
+                                    valid_pullback_5m = False
+                                    if not self.state.pullback_confirmed_5m:
+                                        valid_pullback_5m = self.state.pullback_count_5m >= 5 or retrace >= 0.99
+                                        if valid_pullback_5m:
+                                             self.state.pullback_confirmed_5m = True
+                                             reason = "COUNT" if self.state.pullback_count_5m >= 5 else "PCT"
+                                             print(f"[5M PB DEBUG] VALIDATED via {reason} | Time: {candle_5m['time']} | Count: {self.state.pullback_count_5m} | Reached: {retrace:.2%} (Req: 99%)")
 
-                                    if candle_5m["low"] < self.state.candidate_low_5m and not valid_pullback_5m:
+                                    if candle_5m["low"] < self.state.candidate_low_5m and not self.state.pullback_confirmed_5m:
                                         self.state.candidate_low_5m = candle_5m["low"]
                                         self.state.candidate_low_5m_time = candle_5m["time"]
                                         self.state.pullback_count_5m = 0
 
 
 
-                                    if valid_pullback_5m:
+                                    if self.state.pullback_confirmed_5m:
                                         self.state.swing_low_5m=self.state.candidate_low_5m
 
                                         self.state.buffer_5m_sh.append(candle_5m)    
@@ -834,6 +844,7 @@ class TradingEngine:
 
                                             self.state.swing_high_5m = swing_candle["high"]
                                             self.state.swing_high_5m_time = swing_candle["time"] 
+                                            print("swing high 5m updated to", self.state.swing_high_5m, "at", self.state.swing_high_5m_time)
                                             self.state.protected_5m_point = self.state.swing_high_5m
                                             self.state.protected_5m_time  = self.state.swing_high_5m_time  
                                             # 📡 Broadcast 5M BOS
@@ -854,6 +865,7 @@ class TradingEngine:
                                             self.state.candidate_low_5m = candle_5m["low"]
                                             self.state.candidate_low_5m_time = candle_5m["time"]
                                             self.state.pullback_count_5m=0
+                                            self.state.pullback_confirmed_5m = False
                                             self.state.buffer_5m_sh.clear()
 
                                             #CHOCH 5m
@@ -877,6 +889,7 @@ class TradingEngine:
                                             self.state.swing_low_5m_time = self.state.candidate_low_5m_time
                                             self.state.market_trend_5m="BULLISH"
                                             self.state.pullback_count_5m=0
+                                            self.state.pullback_confirmed_5m = False
                                             self.state.candidate_high_5m= candle_5m["high"]
                                             self.state.candidate_high_5m_time = candle_5m["time"]
                                             # print(f"[{self.symbol}] [START] 5M NORMAL CHOCH @ {candle_5m['time']} | Broken High: {self.state.swing_high_5m}")
@@ -884,19 +897,25 @@ class TradingEngine:
                                             self.state.buffer_5m_sh.clear()
 
                                 if self.state.market_trend_5m=="BULLISH":
-                                    if bear_candle_5m and (self.state.pullback_count_5m == 0 or self.state.pullback_count_5m == 1):
+                                    if bear_candle_5m and (self.state.pullback_count_5m >= 0 and self.state.pullback_count_5m < 5):
                                         self.state.pullback_count_5m += 1
 
                                     retrace=(self.state.candidate_high_5m - candle_5m["low"]) / max(
                                                     self.state.candidate_high_5m - self.state.swing_low_5m, 1e-9
                                                 )
-                                    valid_pullback_5m = self.state.pullback_count_5m >= 2 or retrace >= 0.99
+                                    valid_pullback_5m = False
+                                    if not self.state.pullback_confirmed_5m:
+                                        valid_pullback_5m = self.state.pullback_count_5m >= 5 or retrace >= 0.99
+                                        if valid_pullback_5m:
+                                             self.state.pullback_confirmed_5m = True
+                                             reason = "COUNT" if self.state.pullback_count_5m >= 5 else "PCT"
+                                             print(f"[5M PB DEBUG] VALIDATED via {reason} | Time: {candle_5m['time']} | Count: {self.state.pullback_count_5m} | Reached: {retrace:.2%} (Req: 99%)")
 
-                                    if candle_5m["high"] > self.state.candidate_high_5m and not valid_pullback_5m:
+                                    if candle_5m["high"] > self.state.candidate_high_5m and not self.state.pullback_confirmed_5m:
                                         self.state.candidate_high_5m = candle_5m["high"]
                                         self.state.pullback_count_5m = 0
                                     
-                                    if valid_pullback_5m:
+                                    if self.state.pullback_confirmed_5m:
                                         self.state.swing_high_5m=self.state.candidate_high_5m
 
                                         self.state.buffer_5m_sl.append(candle_5m)    
@@ -929,6 +948,7 @@ class TradingEngine:
                                             self.state.candidate_high_5m = candle_5m["high"]
                                             self.state.candidate_high_5m_time = candle_5m["time"]
                                             self.state.pullback_count_5m = 0
+                                            self.state.pullback_confirmed_5m = False
                                             self.state.buffer_5m_sl.clear()
 
                                         #CHOCH 5m
@@ -952,6 +972,7 @@ class TradingEngine:
                                             self.state.swing_high_5m_time = self.state.candidate_high_5m_time
                                             self.state.market_trend_5m="BEARISH"
                                             self.state.pullback_count_5m=0
+                                            self.state.pullback_confirmed_5m = False
                                             self.state.candidate_low_5m= candle_5m["low"]
                                             self.state.candidate_low_5m_time = candle_5m["time"]
                                             # print(f"[{self.symbol}] [START] 5M NORMAL CHOCH @ {candle_5m['time']} | Broken Low: {self.state.swing_low_5m}")
@@ -1247,18 +1268,24 @@ class TradingEngine:
                                     continue
 
                                 if self.state.market_trend_5m == "BULLISH":
-                                    if bear_candle_5m and (self.state.pullback_count_5m == 0 or self.state.pullback_count_5m == 1):
+                                    if bear_candle_5m and (self.state.pullback_count_5m >= 0 and self.state.pullback_count_5m < 5):
                                         self.state.pullback_count_5m += 1
 
                                     retrace = (self.state.candidate_high_5m - candle_5m["low"]) / max(self.state.candidate_high_5m - self.state.swing_low_5m, 1e-9)
-                                    valid_pullback_5m = self.state.pullback_count_5m >= 2 or retrace >= 0.75
+                                    valid_pullback_5m = False
+                                    if not self.state.pullback_confirmed_5m:
+                                        valid_pullback_5m = self.state.pullback_count_5m >= 5 or retrace >= 0.99
+                                        if valid_pullback_5m:
+                                             self.state.pullback_confirmed_5m = True
+                                             reason = "COUNT" if self.state.pullback_count_5m >= 5 else "PCT"
+                                             print(f"[5M PB DEBUG] VALIDATED via {reason} | Time: {candle_5m['time']} | Count: {self.state.pullback_count_5m} | Reached: {retrace:.2%} (Req: 99%)")
 
-                                    if candle_5m["high"] > self.state.candidate_high_5m and not valid_pullback_5m:
+                                    if candle_5m["high"] > self.state.candidate_high_5m and not self.state.pullback_confirmed_5m:
                                         self.state.candidate_high_5m = candle_5m["high"]
                                         self.state.pullback_count_5m = 0
 
 
-                                    if valid_pullback_5m:
+                                    if self.state.pullback_confirmed_5m:
                                         self.state.swing_high_5m=self.state.candidate_high_5m
                                         self.state.swing_high_5m_time = self.state.candidate_high_5m_time
                                         self.state.buffer_5m_sl.append(candle_5m)
@@ -1291,6 +1318,7 @@ class TradingEngine:
                                             self.state.candidate_high_5m = candle_5m["high"]
                                             self.state.candidate_high_5m_time = candle_5m["time"]
                                             self.state.pullback_count_5m = 0
+                                            self.state.pullback_confirmed_5m = False
                                             self.state.buffer_5m_sl.clear()
 
                                         # CHOCH 5m 
@@ -1314,6 +1342,7 @@ class TradingEngine:
                                             self.state.swing_high_5m_time = self.state.candidate_high_5m_time
                                             self.state.market_trend_5m = "BEARISH"
                                             self.state.pullback_count_5m = 0
+                                            self.state.pullback_confirmed_5m = False
                                             self.state.candidate_low_5m = candle_5m["low"]
                                             self.state.candidate_low_5m_time = candle_5m["time"]
                                             # print(f"[{self.symbol}]  5M NORMAL CHOCH @ {candle_5m['time']} | Broken Low: {self.state.swing_low_5m}")
@@ -1321,19 +1350,25 @@ class TradingEngine:
                                             self.state.buffer_5m_sl.clear()
 
                                 if self.state.market_trend_5m == "BEARISH":
-                                    if bull_candle_5m and (self.state.pullback_count_5m == 0 or self.state.pullback_count_5m == 1):
+                                    if bull_candle_5m and (self.state.pullback_count_5m >= 0 and self.state.pullback_count_5m < 5):
                                         self.state.pullback_count_5m += 1
 
                                     retrace = (candle_5m["high"] - self.state.candidate_low_5m) / max(self.state.swing_high_5m - self.state.candidate_low_5m, 1e-9)
-                                    valid_pullback_5m = self.state.pullback_count_5m >= 2 or retrace >= 0.99
+                                    valid_pullback_5m = False
+                                    if not self.state.pullback_confirmed_5m:
+                                        valid_pullback_5m = self.state.pullback_count_5m >= 5 or retrace >= 0.99
+                                        if valid_pullback_5m:
+                                             self.state.pullback_confirmed_5m = True
+                                             reason = "COUNT" if self.state.pullback_count_5m >= 5 else "PCT"
+                                             print(f"[5M PB DEBUG] VALIDATED via {reason} | Time: {candle_5m['time']} | Count: {self.state.pullback_count_5m} | Reached: {retrace:.2%} (Req: 99%)")
 
-                                    if candle_5m["low"] < self.state.candidate_low_5m and not valid_pullback_5m:
+                                    if candle_5m["low"] < self.state.candidate_low_5m and not self.state.pullback_confirmed_5m:
                                         self.state.candidate_low_5m = candle_5m["low"]
                                         self.state.pullback_count_5m = 0
 
 
 
-                                    if valid_pullback_5m:
+                                    if self.state.pullback_confirmed_5m:
                                         self.state.swing_low_5m=self.state.candidate_low_5m
                                         self.state.swing_low_5m_time = self.state.candidate_low_5m_time
 
@@ -1367,6 +1402,7 @@ class TradingEngine:
                                             self.state.candidate_low_5m = candle_5m["low"]
                                             self.state.candidate_low_5m_time = candle_5m["time"]
                                             self.state.pullback_count_5m = 0
+                                            self.state.pullback_confirmed_5m = False
                                             self.state.buffer_5m_sh.clear()
 
                                         # CHOCH 5m (BEARISH VERSION)
@@ -1390,6 +1426,7 @@ class TradingEngine:
                                             self.state.swing_low_5m_time = self.state.candidate_low_5m_time
                                             self.state.market_trend_5m = "BULLISH"
                                             self.state.pullback_count_5m = 0
+                                            self.state.pullback_confirmed_5m = False
                                             self.state.candidate_high_5m = candle_5m["high"]
                                             self.state.candidate_high_5m_time = candle_5m["time"]
                                             # print(f"[{self.symbol}] 5M NORMAL CHOCH @ {candle_5m['time']} | Broken High: {self.state.swing_high_5m}")
