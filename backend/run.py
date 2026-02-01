@@ -35,7 +35,7 @@ from engine.swings_detect import market_structure_mapping
 # FIXED INPUT FILE
 # ==================================================
 MINUTE_CSV_PATH = Path(
-    r"D:\Trading Project\trading_system_backend\DAT_MT_EURUSD_M1_2022.csv"
+    r"C:\Gurukiran\projects\trading_system\trading_system_backend\DAT_MT_USDCAD_M1_2022.csv"
 )
 
 # ==================================================
