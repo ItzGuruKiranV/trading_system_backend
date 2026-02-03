@@ -68,6 +68,11 @@ class PairState:
 
     trend_5m: str = None  # current 5M trend
 
+    invalidation: int = 0  
+    green_count: int = 0
+    red_count: int = 0
+    bos_count_5m: int = 0
+
     # -----------------------------
     # POI / TAP / PROTECTION
     # -----------------------------

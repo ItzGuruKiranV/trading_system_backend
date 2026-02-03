@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 
 
-def sort_pois_merged(pois):
+def sort_pois_merged(pois, df, trend):
     def bull_key(p):
         if p['type'] == 'OB':
             return p['price_high']
@@ -24,10 +24,88 @@ def sort_pois_merged(pois):
 
     bull_sorted = sorted(bull_pois, key=bull_key, reverse=True)
     bear_sorted = sorted(bear_pois, key=bear_key)
+    sorted_pois = bull_sorted + bear_sorted
+    if trend.upper() == "BEARISH" and sorted_pois:
 
-    # print(f"Sorted {len(bull_sorted)} bullish POIs and {len(bear_sorted)} bearish POIs.")
-    return bull_sorted + bear_sorted
+        start_price = df.iloc[0]["high"]
+        lowest_price = df["low"].min()
+        fifty_level = (start_price + lowest_price) / 2
 
+        last_ob = None
+        last_liq = None
+
+        for p in reversed(sorted_pois):
+            if p["type"] == "OB":
+                last_ob = p
+                break
+
+        for p in reversed(sorted_pois):
+            if p["type"] == "LIQ":
+                last_liq = p
+                break
+
+        # 🔑 ONLY if OB is below 50% level
+        if last_ob and last_ob["price_high"] < fifty_level:
+
+            # ❗ NO LIQ → DELETE OB
+            if last_liq is None:
+                sorted_pois.remove(last_ob)
+
+            # ❗ LIQ EXISTS but ABOVE OB → DELETE OB
+            elif last_liq["price_high"] > last_ob["price_high"]:
+                sorted_pois.remove(last_ob)
+    elif trend.upper() == "BULLISH" and sorted_pois:
+
+        start_price = df.iloc[0]["low"]
+        highest_price = df["high"].max()
+        fifty_level = (start_price + highest_price) / 2
+
+        last_ob = None
+        last_liq = None
+
+        for p in reversed(sorted_pois):
+            if p["type"] == "OB":
+                last_ob = p
+                break
+
+        for p in reversed(sorted_pois):
+            if p["type"] == "LIQ":
+                last_liq = p
+                break
+
+        # 🔑 ONLY if OB is above 50% level
+        if last_ob and last_ob["price_low"] > fifty_level:
+
+            # ❗ NO LIQ → DELETE OB
+            if last_liq is None:
+                sorted_pois.remove(last_ob)
+
+            # ❗ LIQ EXISTS but BELOW OB → DELETE OB
+            elif last_liq["price_low"] < last_ob["price_low"]:
+                sorted_pois.remove(last_ob)
+    # ======================================================
+    # 🔹 NEW LOGIC: REMOVE LIQ IF SAME LEVEL AS OB
+    # ======================================================
+    ob_levels = []
+    for p in sorted_pois:
+        if p["type"] == "OB":
+            if trend.upper() == "BULLISH":
+                ob_levels.append(p["price_low"])
+            else:
+                ob_levels.append(p["price_high"])
+
+    # Remove LIQs that match OB levels
+    sorted_pois = [
+        p for p in sorted_pois
+        if not (p["type"] == "LIQ" and (
+            (trend.upper() == "BULLISH" and p["price_low"] in ob_levels) or
+            (trend.upper() == "BEARISH" and p["price_high"] in ob_levels)
+        ))
+    ]
+
+    return sorted_pois
+    
+    
 
 # ======================================================
 # 🔧 TEMP DEBUG PLOTTING FUNCTION (HTML)
@@ -91,8 +169,11 @@ def detect_pois_from_swing(
     ohlc_df: pd.DataFrame,
     trend: str,
     pair: str,
-    ob_multiplier: float = 1.8,
+    ob_multiplier: float = 1.75,
     liq_pullback_candles: int = 4,
+    choch_happened: bool = False,
+    choch_level: float = None,
+    choch_time: datetime = None
 ) -> List[Dict]:
     print("POI Detection Range:", pair)
     print("Start:", ohlc_df.index.min())
@@ -121,10 +202,10 @@ def detect_pois_from_swing(
 
         base = df.iloc[i]
 
-        if is_bull and base["close"] >= base["open"]:
-            continue
-        if not is_bull and base["close"] <= base["open"]:
-            continue
+        # if is_bull and base["close"] >= base["open"]:
+        #     continue
+        # if not is_bull and base["close"] <= base["open"]:
+        #     continue
 
         base_low = base["low"]
         base_high = base["high"]
@@ -299,8 +380,23 @@ def detect_pois_from_swing(
         i += 1
 
 
+    # ======================================================
+    # 3️⃣ CHOCH EVENT AS LIQUIDITY POI
+    # ======================================================
+    if choch_happened and choch_level is not None and choch_time is not None:
+        print(f"[POI] Adding CHOCH level {choch_level} at {choch_time} as Liquidity")
+        liqs.append({
+            "time": choch_time,
+            "type": "LIQ",
+            "trend": trend.upper(),
+            "price_low": choch_level if not is_bull else None,
+            "price_high": choch_level if is_bull else None,
+            "if_valid": True,
+            "subtype": "CHOCH"
+        })
+
     pois = merged_obs + liqs
     print(f"Detected {len(merged_obs)} OBs and {len(liqs)} LIQs for {trend} trend.")
 
     #plot_pois_debug(df, pois, trend)
-    return sort_pois_merged(pois)
+    return sort_pois_merged(pois,df,trend)
