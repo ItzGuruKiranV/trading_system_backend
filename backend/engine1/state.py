@@ -88,7 +88,8 @@ class PairState:
     protected_5m_time: Optional[datetime] = None
 
     poi_invalidated: bool = False  # flag if active POI got invalidated
-
+    no_invalidation: bool = False  # flag to indicate no invalidation has occurred
+    
     # -----------------------------
     # TRADE / CHOCH
     # -----------------------------

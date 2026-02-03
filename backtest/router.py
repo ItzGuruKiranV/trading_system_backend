@@ -9,7 +9,7 @@ router = APIRouter(prefix="/backtest", tags=["Backtest"])
 @router.get("/")
 def get_backtest(
     pair: str = Query(..., example="EURUSD"),
-    year: str = Query(..., example=2025),
+    year: str = Query(..., example="ALL"),
 ):
     data = get_backtest_data(pair, year)
     if not data:

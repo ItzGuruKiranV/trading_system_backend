@@ -123,10 +123,10 @@ class TradingEngine:
 
         self.state.trend_5m = None
 
-        self.state.swing_high_5m = None
-        self.state.swing_high_5m_time = None
-        self.state.swing_low_5m = None
-        self.state.swing_low_5m_time = None
+        # self.state.swing_high_5m = None
+        # self.state.swing_low_5m = None
+        # self.state.swing_high_5m_time = None
+        # self.state.swing_low_5m_time = None
         self.state.candidate_high_5m = None
         self.state.candidate_high_5m_time = None
         self.state.candidate_low_5m = None
@@ -136,6 +136,7 @@ class TradingEngine:
         self.state.choch_5m = False
         self.state.pullback_confirmed_5m = False
         self.state.bos_count_5m = 0
+        self.state.no_invalidation = False
 
         self.state.buffer_5m_sh.clear()
         self.state.buffer_5m_sl.clear()
@@ -993,7 +994,6 @@ class TradingEngine:
                                                 #print(f"[DEBUG] 5m BOS count updated (BEARISH): {self.state.bos_count_5m} | Time: {candle_5m['time']} | Level: {self.state.candidate_low_5m}")
 
                                             self.state.swing_high_5m = swing_candle["high"]
-                                            print("swing high after pb bearish(on bos)", self.state.swing_high_5m)
                                             self.state.swing_high_5m_time = swing_candle["time"]
                                             self.state.protected_5m_point = self.state.swing_high_5m
                                             self.state.protected_5m_time = self.state.swing_high_5m_time
@@ -1019,7 +1019,6 @@ class TradingEngine:
                                             self.state.buffer_5m_sh.clear()
 
                                         # CHOCH 5m (BEARISH VERSION)
-                                        print("checking choch bearish", candle_5m["high"], self.state.swing_high_5m)
                                         if candle_5m["high"] > self.state.swing_high_5m:
 
                                             self.state.swing_low_5m = self.state.candidate_low_5m
@@ -1135,7 +1134,12 @@ class TradingEngine:
                                                 invalidation_level = (active_poi["price"] + next_poi["price"]) / 2
                                             elif p0_type=="LIQ" and p1_type=="OB":
                                                 invalidation_level = (active_poi["price"] + next_poi["price_high"]) / 2
-                                        else:
+                                        
+                                        elif p0_type == "LIQ" and (active_poi["price"] == self.state.swing_high or active_poi["price"] == self.state.swing_low):
+                                            self.state.no_invalidation = True
+                                            invalidation_level = None
+
+                                        else:    
                                             if p0_type == "OB":
                                                 invalidation_level = (active_poi["price_high"] + self.state.swing_low) / 2
                                             else:
@@ -1145,13 +1149,19 @@ class TradingEngine:
                                 # 5M CHOCH CHECK & TRADE SETUP (Realtime)
                                 # --------------------------------------------------   
                                 if not self.state.choch_5m and self.state.active_poi :
-            
-                                    if candle_5m["low"]<= invalidation_level or self.state.bos_count_5m>=2:
-                                        self.state.active_poi=None
-                                        self.state.poi_tapped=False
-                                        self.state.bos_count_5m=0
-                                        print("invalidation level hit, removing active poi")
-                                        continue
+                                    if not self.state.no_invalidation:
+                                        if candle_5m["low"]<= invalidation_level or self.state.bos_count_5m>=2:
+                                            self.state.active_poi=None
+                                            self.state.poi_tapped=False
+                                            self.state.bos_count_5m=0
+                                            print("invalidation level hit, removing active poi")
+                                            continue
+                                    else:
+                                        if self.state.bos_count_5m>=2:
+                                            self.state.active_poi=None
+                                            self.state.poi_tapped=False
+                                            self.state.bos_count_5m=0
+                                            print("invalidation level hit, removing active poi that is swing poi")
 
                                     if candle_5m["high"] > self.state.swing_high_5m :
                                         self.state.choch_5m=True
@@ -1437,13 +1447,21 @@ class TradingEngine:
                                 # --------------------------------------------------
                                 if not self.state.choch_5m and self.state.active_poi:
                                     # MIRRORED: Check if price goes above invalidation level
-                                    if candle_5m["high"] >= invalidation_level or self.state.bos_count_5m >= 2:
-                                        self.state.active_poi = None
-                                        self.state.poi_tapped = False
-                                        self.state.bos_count_5m = 0
-                                        print("invalidation level hit, removing active poi")
-                                        continue
+                                    if not self.state.no_invalidation:
+                                        if candle_5m["high"] >= invalidation_level or self.state.bos_count_5m >= 2:
+                                            self.state.active_poi = None
+                                            self.state.poi_tapped = False
+                                            self.state.bos_count_5m = 0
+                                            print("invalidation level hit, removing active poi")
+                                            continue
                                     
+                                    else:
+                                        if self.state.bos_count_5m>=2:
+                                            self.state.active_poi=None
+                                            self.state.poi_tapped=False
+                                            self.state.bos_count_5m=0
+                                            print("invalidation level hit, removing active poi that is swing poi")
+                                        
                                     # MIRRORED: For BEARISH, check BEARISH CHOCH (price breaks below swing_low)
                                     if candle_5m["low"] < self.state.swing_low_5m:
                                         self.state.choch_5m = True

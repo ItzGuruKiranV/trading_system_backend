@@ -7,17 +7,19 @@ from datetime import datetime
 def sort_pois_merged(pois, df, trend):
     def bull_key(p):
         if p['type'] == 'OB':
-            return p['price_high']
+            return p['price_high'] if p['price_high'] is not None else -float("inf")
         elif p['type'] == 'LIQ':
-            return p['price_low']
-        return 0
+            return p['price_low'] if p['price_low'] is not None else -float("inf")
+        return -float("inf")
+
 
     def bear_key(p):
         if p['type'] == 'OB':
-            return p['price_low']
+            return p['price_low'] if p['price_low'] is not None else float("inf")
         elif p['type'] == 'LIQ':
-            return p['price_high'] if p['price_high'] is not None else float('inf')
-        return 0
+            return p['price_high'] if p['price_high'] is not None else float("inf")
+        return float("inf")
+
 
     bull_pois = [p for p in pois if p['trend'] == 'BULLISH']
     bear_pois = [p for p in pois if p['trend'] == 'BEARISH']
@@ -400,3 +402,5 @@ def detect_pois_from_swing(
 
     #plot_pois_debug(df, pois, trend)
     return sort_pois_merged(pois,df,trend)
+
+    

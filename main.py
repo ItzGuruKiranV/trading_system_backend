@@ -53,7 +53,7 @@ async def startup():
     run1.ws_manager.set_loop(loop)
     run1.event_manager.set_loop(loop)
 
-    PAIRS = ["EURUSD"]  # Add more pairs as needed
+    PAIRS = ["GBPCHF"]  # Add more pairs as needed
 
     for pair in PAIRS:
         run1.start_engine(pair)
