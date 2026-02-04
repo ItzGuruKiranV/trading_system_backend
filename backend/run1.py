@@ -1759,7 +1759,6 @@ class TradingEngine:
                                         print("Trade Details:", self.state.choch_trade)
                                         #print()
 
-         
                                 # --------------------------------------------------
                                 # TRADE MANAGEMENT (SELL ONLY - Realtime 5M) - MIRRORED
                                 # --------------------------------------------------
