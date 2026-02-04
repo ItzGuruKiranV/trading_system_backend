@@ -198,7 +198,7 @@ class TradingEngine:
 
         print(f"[DEBUG] reset_on_4h_structure called. Reseting 5M structure from High: {self.state.swing_high_5m}, Low: {self.state.swing_low_5m}")
 
-    def save_trade_to_db(self, trade_date, side, result, entry, exit_price, pnl):
+    def save_trade_to_db(self, trade_date, side, result, entry, exit_price, pnl,trade_type):
         data = {
             "pair": self.symbol,
             "trade_date": str(trade_date),
@@ -207,6 +207,7 @@ class TradingEngine:
             "entry": float(entry),
             "exit_price": float(exit_price),
             "pnl": float(pnl),
+            "trade_type":str(trade_type),
         }
 
         try:
@@ -1233,7 +1234,9 @@ class TradingEngine:
                                             risk = entry - stop_loss
                                             take_profit = entry + 3 * risk
 
-                                        if risk <= 0:
+                                        if risk <= 0 or take_profit > self.state.swing_high:
+                                            self.state.choch_5m = None 
+                                            self.state.trade_active = False                                            
                                             continue
 
                                         self.state.trade = {
@@ -1252,6 +1255,8 @@ class TradingEngine:
                                             "range_low": float(range_low),
                                             "planned_time": candle_5m["time"],
                                             "status": "PLANNED",
+                                            "trade_type":"PULLBACK",
+
                                         }
                                         
                                         self.state.trade_planned = True
@@ -1321,7 +1326,9 @@ class TradingEngine:
                                             risk = entry - stop_loss
                                             take_profit = entry + 2 * risk
 
-                                        if risk <= 0:
+                                        if risk <= 0 or take_profit > self.state.swing_high :
+                                            self.state.choch_5m = None 
+                                            self.state.trade_active = False                                            
                                             continue
 
                                         self.state.choch_trade = {
@@ -1340,6 +1347,7 @@ class TradingEngine:
                                             "range_low": float(range_low),
                                             "planned_time": candle_5m["time"],
                                             "status": "PLANNED",
+                                            "trade_type":"CHOCH",
                                         }
                                         
                                         self.state.choch_trade_planned = True
@@ -1347,12 +1355,28 @@ class TradingEngine:
                                         ts_str = candle_5m['time'].strftime('%Y%m%d_%H%M')
                                         iso_start = candle_5m['time'].isoformat()
                                         iso_end = (candle_5m['time'] + pd.Timedelta(minutes=25)).isoformat()
+
+                                        plan_event = {
+                                            "symbol": self.symbol,
+                                            "timeframe": "5m",
+                                            "events": [
+                                                {
+                                                    "id": f"5m_TRADE_{ts_str}",
+                                                    "type": "TRADE_PLAN",
+                                                    "plan_direction": "LONG" if direction == "BUY" else "SHORT",
+                                                    "SL": float(stop_loss),
+                                                    "TP": float(take_profit),
+                                                    "Entry": float(entry),
+                                                    "time_start": iso_start,
+                                                    "time_end": iso_end
+                                                }
+                                            ]
+                                        }
                                         
                                         self.send_event(plan_event)
 
-                                        print(f"[{self.symbol}] [START] TRADE PLANNED & STORED")
+                                        print(f"[{self.symbol}] [START]CHOCH TRADE PLANNED & STORED")
                                         print("Trade Details:", self.state.choch_trade)
-
 
                                 # --------------------------------------------------
                                 # TRADE MANAGEMENT (BUY ONLY - Realtime 5M)
@@ -1397,7 +1421,7 @@ class TradingEngine:
                                                     trade["status"] = "SL"
                                                     trade["exit_time"] = candle_time
                                                     trade["exit_price"] = sl
-                                                    self.save_trade_to_db(trade["entry_time"], "BUY", "SL", trade["entry"], sl, -100)
+                                                    self.save_trade_to_db(trade["entry_time"], "BUY", "SL", trade["entry"], sl, -100,trade["trade_type"])
                                                     print("trade saved to db after SL")
                                                     self.state.trade = None
                                                     self.state.trade_planned = False
@@ -1409,12 +1433,13 @@ class TradingEngine:
                                                     trade["status"] = "TP"
                                                     trade["exit_time"] = candle_time
                                                     trade["exit_price"] = tp
-                                                    self.save_trade_to_db(trade["entry_time"], "BUY", "WIN", trade["entry"], tp, 100)
+                                                    self.save_trade_to_db(trade["entry_time"], "BUY", "WIN", trade["entry"], tp, 300,trade["trade_type"])
                                                     print("trade saved to db after TP")
                                                     self.state.trade = None
                                                     self.state.trade_planned = False
                                                     self.state.entry_filled = False
                                                     continue
+
 
                                 if self.state.choch_trade_planned and self.state.choch_trade is not None:
 
@@ -1434,7 +1459,7 @@ class TradingEngine:
                                                 trade["status"] = "SL"
                                                 trade["exit_time"] = candle_time
                                                 trade["exit_price"] = sl
-                                                self.save_trade_to_db(trade["entry_time"], "BUY", "SL", trade["entry"], sl, -10)
+                                                self.save_trade_to_db(trade["entry_time"], "BUY", "SL", trade["entry"], sl, -50 ,trade["trade_type"])
                                                 print("trade saved to db after SL")
                                                 self.state.choch_trade = None
                                                 self.state.choch_trade_planned = False
@@ -1446,7 +1471,7 @@ class TradingEngine:
                                                     trade["status"] = "TP"
                                                     trade["exit_time"] = candle_time
                                                     trade["exit_price"] = tp
-                                                    self.save_trade_to_db(trade["entry_time"], "BUY", "WIN", trade["entry"], tp, 10)
+                                                    self.save_trade_to_db(trade["entry_time"], "BUY", "WIN", trade["entry"], tp, 100 , trade["trade_type"])
                                                     print("trade saved to db after TP")
                                                     self.state.choch_trade = None
                                                     self.state.choch_trade_planned = False
@@ -1616,7 +1641,9 @@ class TradingEngine:
                                             risk = stop_loss - entry  # MIRRORED: Risk calculation
                                             take_profit = entry - 3 * risk  # MIRRORED: Downwards target
 
-                                        if risk <= 0:
+                                        if risk <= 0 or take_profit < self.state.swing_low :
+                                            self.state.choch_5m = None 
+                                            self.state.trade_active = False
                                             continue
 
                                         self.state.trade = {
@@ -1635,6 +1662,7 @@ class TradingEngine:
                                             "range_low": float(range_low),
                                             "planned_time": candle_5m["time"],
                                             "status": "PLANNED",
+                                            "trade_type":"PULLBACK",
                                         }
 
                                         self.state.trade_planned = True
@@ -1706,7 +1734,9 @@ class TradingEngine:
                                             risk = stop_loss - entry  # MIRRORED: Risk calculation
                                             take_profit = entry - 2 * risk  # MIRRORED: Downwards target
 
-                                        if risk <= 0:
+                                        if risk <= 0 or take_profit < self.state.swing_low :
+                                            self.state.choch_5m = None 
+                                            self.state.trade_active = False
                                             continue
 
                                         self.state.choch_trade = {
@@ -1725,6 +1755,7 @@ class TradingEngine:
                                             "range_low": float(range_low),
                                             "planned_time": candle_5m["time"],
                                             "status": "PLANNED",
+                                            "trade_type":"CHOCH",
                                         }
 
                                         self.state.choch_trade_planned = True
@@ -1804,7 +1835,7 @@ class TradingEngine:
                                                 trade["exit_time"] = candle_time
                                                 trade["exit_price"] = sl
 
-                                                self.save_trade_to_db(trade["entry_time"], "SELL", "SL", trade["entry"], sl, -100)
+                                                self.save_trade_to_db(trade["entry_time"], "SELL", "SL", trade["entry"], sl, -100 , trade["trade_type"])
                                                 print("trade saved to db after SL")
                                                 self.state.trade = None
                                                 self.state.trade_planned = False
@@ -1817,12 +1848,13 @@ class TradingEngine:
                                                 trade["status"] = "TP"
                                                 trade["exit_time"] = candle_time
                                                 trade["exit_price"] = tp
-                                                self.save_trade_to_db(trade["entry_time"], "SELL", "WIN", trade["entry"], tp, 100)
+                                                self.save_trade_to_db(trade["entry_time"], "SELL", "WIN", trade["entry"], tp, 300 , trade["trade_type"])
                                                 print("trade saved to db after TP")
                                                 self.state.trade = None
                                                 self.state.trade_planned = False
                                                 self.state.entry_filled = False
                                                 continue
+
 
                                 if self.state.choch_trade_planned and self.state.choch_trade is not None:
                                     trade = self.state.choch_trade
@@ -1843,7 +1875,7 @@ class TradingEngine:
                                                 trade["exit_time"] = candle_time
                                                 trade["exit_price"] = sl
 
-                                                self.save_trade_to_db(trade["entry_time"], "SELL", "SL", trade["entry"], sl, -10)
+                                                self.save_trade_to_db(trade["entry_time"], "SELL", "SL", trade["entry"], sl, -50 , trade["trade_type"])
                                                 print("trade saved to db after SL")
                                                 self.state.choch_trade = None
                                                 self.state.choch_trade_planned = False
@@ -1855,7 +1887,7 @@ class TradingEngine:
                                                 trade["status"] = "TP"
                                                 trade["exit_time"] = candle_time
                                                 trade["exit_price"] = tp
-                                                self.save_trade_to_db(trade["entry_time"], "SELL", "WIN", trade["entry"], tp, 10)
+                                                self.save_trade_to_db(trade["entry_time"], "SELL", "WIN", trade["entry"], tp, 100 , trade["trade_type"])
                                                 print("trade saved to db after TP")
                                                 self.state.choch_trade = None
                                                 self.state.choch_trade_planned = False
