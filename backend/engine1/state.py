@@ -24,6 +24,9 @@ class PairState:
     trade_active: bool = False 
     protected_high: Optional[float] = None
     protected_low: Optional[float] = None
+    choch_trade_active: bool = False
+
+
 
     candidate_high: Optional[float] = None
     candidate_high_time: Optional[datetime] = None
@@ -96,6 +99,10 @@ class PairState:
     trade: Optional[dict] = None  # stores the planned trade details
     trade_planned: bool = False
     entry_filled: bool = False
+
+    choch_trade: Optional[dict] = None  # stores the planned trade details
+    choch_trade_planned: bool = False
+    choch_entry_filled: bool = False
 
     choch_5m: bool = False  # flag to mark the exact candle where 5M CHOCH occurred
     market_trend_5m=None
