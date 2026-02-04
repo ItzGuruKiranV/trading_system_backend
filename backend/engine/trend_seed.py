@@ -1,8 +1,8 @@
 import pandas as pd
 import sys
 import os
-
-
+from pathlib import Path
+from datetime import datetime
 
 SEED_DAYS = 10
 CANDLES_PER_DAY_4H = 6
@@ -335,3 +335,79 @@ def detect_seed(df_4h: pd.DataFrame):
     # Only reaches here if NO break
     print("🎬 NO BREAK - no break detected")
     raise ValueError("No break detected")
+
+
+def get_static_seed(symbol: str, start_time: Optional[datetime] = None):
+    """
+    Helper to calculate seed data dynamically from the CSV for the given symbol.
+    If start_time is provided, only considers data on or after that time.
+    """
+    base_dir = Path(__file__).resolve().parent.parent.parent # d:\Trading Project\trading_system_backend
+    
+    # Try multiple paths (similar to run1.py)
+    potential_paths = [
+        base_dir / f"DAT_MT_{symbol}_M1_2022.csv",
+        base_dir / f"HISTDATA_COM_MT_{symbol}_M12022/DAT_MT_{symbol}_M1_2022.csv"
+    ]
+    
+    csv_path = next((p for p in potential_paths if p.exists()), None)
+    
+    if not csv_path:
+        print(f"[SEED ERROR] CSV not found for {symbol}")
+        return None
+
+    print(f"[SEED] Calculating seed for {symbol} from {csv_path}...")
+    
+    # Read CSV
+    # Optimized read similar to run1 but using pandas for 4H resampling
+    try:
+        df = pd.read_csv(csv_path, names=['date', 'time', 'open', 'high', 'low', 'close', 'vol'], header=0)
+        df['datetime'] = pd.to_datetime(df['date'] + ' ' + df['time'])
+        df.set_index('datetime', inplace=True)
+
+        if start_time:
+            print(f"[SEED] Filtering data starting from {start_time}")
+            df = df[df.index >= start_time]
+        
+        # Resample to 4H
+        df_4h = df.resample('4H').agg({
+            'open': 'first',
+            'high': 'max',
+            'low': 'min',
+            'close': 'last'
+        }).dropna()
+        
+        # Run detection
+        refined_df, trend, break_time, break_idx, states = detect_seed(df_4h)
+        
+        # Extract Swing Levels
+        swing_high = None
+        swing_low = None
+        
+        # The refined_df starts AT the swing point.
+        # If BULLISH, we are at a Swing Low.
+        # If BEARISH, we are at a Swing High.
+        
+        start_candle = refined_df.iloc[0]
+        
+        if trend == "BULLISH":
+            swing_low = float(start_candle['low'])
+            swing_high = None
+        else:
+            swing_high = float(start_candle['high'])
+            swing_low = None
+            
+        print(f"[SEED RESULT] {symbol} | Trend: {trend} | SH: {swing_high} | SL: {swing_low} | Time: {break_time}")
+        
+        return {
+            "trend": trend,
+            "swing_high": swing_high,
+            "swing_low": swing_low,
+            "last_event_time": break_time.to_pydatetime()
+        }
+        
+    except Exception as e:
+        print(f"[SEED ERROR] Failed to calculate seed: {e}")
+        import traceback
+        traceback.print_exc()
+        return None

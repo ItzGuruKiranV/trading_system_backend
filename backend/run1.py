@@ -12,7 +12,8 @@ from ws.event_manager import event_manager
 from db.supabase_client import supabase
 
 from backend.engine1.registry import StateRegistry
-from backend.engine.poi_detection import detect_pois_from_swing 
+from backend.engine.poi_detection import detect_pois_from_swing
+from backend.engine.trend_seed import get_static_seed 
 
 MAX_REPLAY = 1000 
 SIMULATE_REALTIME = True
@@ -56,35 +57,21 @@ class TradingEngine:
             self.state.pullback_pct = 0.35
             self.state.min_pullback_candles = 10
             
-            if self.symbol == "EURUSD":
-                self.state.trend_4h = "BEARISH"
-                self.state.swing_low = None       
-                self.state.swing_high = 1.14827         
-                self.state.bos_time_4h = datetime(2022, 1, 25, 4, 0)
-            elif self.symbol == "GBPJPY":
-                self.state.trend_4h = "BEARISH"
-                self.state.swing_low = None
-                self.state.swing_high = 157.766
-                self.state.bos_time_4h = datetime(2022, 1, 20, 16, 0)
-            elif self.symbol == "EURAUD":
-                self.state.trend_4h = "BULLISH"
-                self.state.swing_low = 1.55735
-                self.state.swing_high = None
-                self.state.bos_time_4h = datetime(2022, 1, 17, 0, 0)
-            elif self.symbol == "GBPCHF":
-                self.state.trend_4h = "BEARISH"
-                self.state.swing_low = None
-                self.state.swing_high = 1.26087
-                self.state.bos_time_4h = datetime(2022, 1, 24, 0, 0)
-            elif self.symbol == "USDCAD":
-                self.state.trend_4h = "BEARISH"
-                self.state.swing_low = None
-                self.state.swing_high = 1.28134
-                self.state.bos_time_4h = datetime(2022, 1, 19, 8, 0)
+            # Try Getting Seed from File
+            seed_data = get_static_seed(self.symbol)
+            
+            if seed_data:
+                print(f"*** [SEED] Loaded initial seed from trend_seed.py")
+                self.state.trend_4h = seed_data['trend']
+                self.state.swing_high = seed_data['swing_high']
+                self.state.swing_low = seed_data['swing_low']
+                # self.state.bos_time_4h might be used for historical filtering, so we set it.
+                self.state.bos_time_4h = seed_data['last_event_time']
+                self.state.last_event_time = seed_data['last_event_time']
             else:
-                # Fallback / Placeholder for others
-                self.state.trend_4h = "BEARISH"
-                self.state.bos_time_4h = datetime(2022, 1, 20, 0, 0)
+                # If file seed fails, we fallback to manual
+                print(f"*** [SEED] Auto-seed failed. Manual input required.")
+                self.seed_input()
 
             self.state.candidate_high = None
             self.state.candidate_high_time = None
@@ -106,6 +93,69 @@ class TradingEngine:
         self.state.trigger_choch_poi = False
         self.state.choch_broken_level = None
         self.state.choch_broken_time = None
+        self.state.last_event_time = None
+
+    def seed_input(self):
+        print(f"\n==========================================")
+        print(f"   SEED INPUT SESSION FOR {self.symbol}")
+        print(f"==========================================\n")
+        
+        # Trend
+        while True:
+            t = input("Enter Trend (BULLISH/BEARISH): ").strip().upper()
+            if t in ["BULLISH", "BEARISH"]:
+                self.state.trend_4h = t
+                break
+            print("Invalid trend. Must be BULLISH or BEARISH.")
+        
+        # Swing High
+        while True:
+            val = input("Enter Swing High Price (or 'None'): ").strip()
+            if val.lower() == 'none':
+                self.state.swing_high = None
+                break
+            try:
+                self.state.swing_high = float(val)
+                break
+            except ValueError:
+                print("Invalid price.")
+
+        # Swing Low
+        while True:
+            val = input("Enter Swing Low Price (or 'None'): ").strip()
+            if val.lower() == 'none':
+                self.state.swing_low = None
+                break
+            try:
+                self.state.swing_low = float(val)
+                break
+            except ValueError:
+                print("Invalid price.")
+
+        # Last Event Time (Seed Date)
+        while True:
+            val = input("Enter Last Structure/Event Time (YYYY-MM-DD HH:MM): ").strip()
+            try:
+                dt = datetime.strptime(val, "%Y-%m-%d %H:%M")
+                self.state.bos_time_4h = dt 
+                self.state.last_event_time = dt
+                break
+            except ValueError:
+                print("Invalid format. Use YYYY-MM-DD HH:MM")
+
+        # Resetting internal counters akin to a fresh start
+        self.state.candidate_high = None
+        self.state.candidate_high_time = None
+        self.state.candidate_low = None
+        self.state.candidate_low_time = None
+        self.state.pullback_confirmed = False
+        self.state.bearish_count = 0
+        self.state.bullish_count = 0
+        self.state.green_count = 0
+        self.state.red_count = 0
+        self.state.bos_count_5m = 0
+        
+        print(f"\n--- SEED COMPLETE. Engine continuing... ---\n")
 
     def send_event(self, payload: dict):
         """Thread-safe pass-through to `event_manager.send_threadsafe` (no simulation pauses)."""
@@ -220,6 +270,40 @@ class TradingEngine:
                         #     time.sleep(0.0001) 
                         
                         self.state.last_candle_time = t
+                        
+                        # Check for 20-day inactivity
+
+                        if self.state.last_event_time and (t - self.state.last_event_time).days >= 15:
+                            print(f"\n[⚠️] No 4H events for 15 days! (Last Event: {self.state.last_event_time}, Current: {t})")
+                            print("Requesting Automatic Re-Seed from Trend Seed File...")
+                            
+                            # Auto-seed using the time of the last event as the start point for new trend detection
+                            seed_data = get_static_seed(self.symbol, start_time=self.state.last_event_time)
+                            
+                            if seed_data:
+                                print(f"*** [AUTO-SEED] Successfully re-seeded from {self.state.last_event_time}")
+                                self.state.trend_4h = seed_data['trend']
+                                self.state.swing_high = seed_data['swing_high']
+                                self.state.swing_low = seed_data['swing_low']
+                                self.state.bos_time_4h = seed_data['last_event_time']
+                                self.state.last_event_time = seed_data['last_event_time']
+                                
+                                # Reset counters
+                                self.state.candidate_high = None
+                                self.state.candidate_high_time = None
+                                self.state.candidate_low = None
+                                self.state.candidate_low_time = None
+                                self.state.pullback_confirmed = False
+                                self.state.bearish_count = 0
+                                self.state.bullish_count = 0
+                                self.state.green_count = 0
+                                self.state.red_count = 0
+                                self.state.bos_count_5m = 0
+                                
+                                print(f"\n--- AUTO-SEED COMPLETE. Engine continuing... ---\n")
+                            else:
+                                print(f"[ERROR] Auto-seed failed. Falling back to manual input.")
+                                self.seed_input()
                             
                         candle_1m = Candle(
                             time=t,
@@ -347,6 +431,7 @@ class TradingEngine:
                                                 self.state.pullback_confirmed = True
                                                 choch_5m=False
                                                 self.state.pullback_time = candle_4h["time"]
+                                                self.state.last_event_time = candle_4h["time"]
                                                 print(f"\n[PULLBACK] [4H BULLISH PB] CONFIRMED @ {self.state.pullback_time}")
                                                 #print()
                                                 self.state.h4_structure_event=None
@@ -512,6 +597,7 @@ class TradingEngine:
                                                     print(f"[{self.symbol}] [CHOCH] BEARISH @ {candle_4h['time']}")
                                                     #print()
                                                 self.state.bos_time_4h = candle_4h["time"]
+                                                self.state.last_event_time = candle_4h["time"]
                                                 self.state.choch_level_4h = candle_4h["close"]
                                                 self.state.h4_structure_event = "CHOCH"
                                                 
@@ -568,6 +654,7 @@ class TradingEngine:
                                                     #print()
                                                 self.state.bos_level_4h = candle_4h["close"]
                                                 self.state.bos_time_4h= candle_4h["time"]
+                                                self.state.last_event_time = candle_4h["time"]
                                                 self.state.h4_structure_event="BOS"
                                                 
                                                 # Capture broken swing time
@@ -622,6 +709,7 @@ class TradingEngine:
                                                 self.state.pullback_confirmed = True
                                                 choch_5m=False
                                                 self.state.pullback_time = candle_4h["time"]
+                                                self.state.last_event_time = candle_4h["time"]
                                                 if not is_historical:
                                                     print(f"\n[PULLBACK] [4H BEARISH PB] CONFIRMED @ {self.state.pullback_time}")
                                                     #print()
@@ -774,6 +862,7 @@ class TradingEngine:
                                                 print(f"[{self.symbol}] [CHOCH] BULLISH @ {candle_4h['time']}")
                                                 #print()
                                                 self.state.bos_time_4h = candle_4h["time"]
+                                                self.state.last_event_time = candle_4h["time"]
                                                 self.state.choch_level_4h = candle_4h["close"]
                                                 self.state.h4_structure_event="CHOCH"
                                                 
@@ -826,6 +915,7 @@ class TradingEngine:
                                                 #print()
                                                 self.state.bos_level_4h = candle_4h["close"]
                                                 self.state.bos_time_4h = candle_4h["time"]
+                                                self.state.last_event_time = candle_4h["time"]
                                                 self.state.h4_structure_event="BOS"
                                                 
                                                 # Capture broken swing time
@@ -1414,6 +1504,7 @@ class TradingEngine:
                                                 }
                                             ]
                                         })
+                                        self.state.last_event_time = floored_4h_time
                                         active_poi = self.state.active_poi
 
                                         next_poi = None
@@ -1574,6 +1665,7 @@ class TradingEngine:
                                         
                                         self.send_event(retr_event)
                                         self.send_event(plan_event)
+                                        self.state.last_event_time = candle_5m["time"]
 
                                         print(f"[{self.symbol}] [START] TRADE PLANNED & STORED")
                                         #print()
@@ -1615,6 +1707,7 @@ class TradingEngine:
                                                 trade["status"] = "OPEN"
                                                 trade["entry_time"] = candle_time
                                                 print(f"[{self.symbol}] [OPEN] SELL ENTRY FILLED @ {entry} | {candle_time}")
+                                                self.state.last_event_time = candle_time
 
                                         else:
                                             # STOP LOSS (SELL VERSION)
