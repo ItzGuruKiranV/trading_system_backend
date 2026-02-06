@@ -193,8 +193,11 @@ class TradingEngine:
         self.state.entry_filled = False
         
         self.state.choch_trade = None
-        self.state.choch_tarde_planned = False
+        self.state.choch_trade_planned = False
         self.state.choch_entry_filled = False
+
+        self.state.trade_active = False
+        self.state.choch_trade_active = False
 
         print(f"[DEBUG] reset_on_4h_structure called. Reseting 5M structure from High: {self.state.swing_high_5m}, Low: {self.state.swing_low_5m}")
 
@@ -956,19 +959,19 @@ class TradingEngine:
                                             self.state.protected_5m_point = self.state.swing_low_5m
                                             self.state.protected_5m_time = self.state.swing_low_5m_time
                                             # 📡 Broadcast 5M BOS
-                                            # event_payload = {
-                                            #     "symbol": self.symbol,
-                                            #     "timeframe": "5m",
-                                            #     "events": [
-                                            #         {
-                                            #             "id": f"5m_BOS_{candle_5m['time'].strftime('%Y%m%d_%H%M')}",
-                                            #             "type": "BOS",
-                                            #             "broken_level": self.state.candidate_low_5m,
-                                            #             "time": self.state.candidate_low_5m_time.isoformat()
-                                            #         }
-                                            #     ]
-                                            # }
-                                            # self.send_event(event_payload)
+                                            event_payload = {
+                                                "symbol": self.symbol,
+                                                "timeframe": "5m",
+                                                "events": [
+                                                    {
+                                                        "id": f"5m_BOS_{candle_5m['time'].strftime('%Y%m%d_%H%M')}",
+                                                        "type": "BOS",
+                                                        "broken_level": self.state.candidate_high_5m,
+                                                        "time": self.state.candidate_high_5m_time.isoformat()
+                                                    }
+                                                ]
+                                            }
+                                            self.send_event(event_payload)
 
                                             self.state.candidate_high_5m = candle_5m["high"]
                                             self.state.candidate_high_5m_time = candle_5m["time"]
@@ -979,6 +982,20 @@ class TradingEngine:
                                         # CHOCH 5m 
                                         #print("checking choch bullish", candle_5m["low"], self.state.swing_low_5m)
                                         if candle_5m["low"] < self.state.swing_low_5m:
+                                            # 📡 Broadcast 5M CHOCH
+                                            event_payload = {
+                                                "symbol": self.symbol,
+                                                "timeframe": "5m",
+                                                "events": [
+                                                    {
+                                                        "id": f"5m_CHOCH_{candle_5m['time'].strftime('%Y%m%d_%H%M')}",
+                                                        "type": "CHOCH",
+                                                        "broken_level": self.state.swing_low_5m,
+                                                        "time": self.state.swing_low_5m_time.isoformat()
+                                                    }
+                                                ]
+                                            }
+                                            self.send_event(event_payload)
 
                                             self.state.swing_high_5m = self.state.candidate_high_5m
                                             self.state.swing_high_5m_time = self.state.candidate_high_5m_time
@@ -1031,19 +1048,19 @@ class TradingEngine:
                                             self.state.protected_5m_point = self.state.swing_high_5m
                                             self.state.protected_5m_time = self.state.swing_high_5m_time
                                             # 📡 Broadcast 5M BOS
-                                            # event_payload = {
-                                            #     "symbol": self.symbol,
-                                            #     "timeframe": "5m",
-                                            #     "events": [
-                                            #         {
-                                            #             "id": f"5m_BOS_{candle_5m['time'].strftime('%Y%m%d_%H%M')}",
-                                            #             "type": "BOS",
-                                            #             "broken_level": self.state.candidate_low_5m,
-                                            #             "time": self.state.candidate_low_5m_time.isoformat()
-                                            #         }
-                                            #     ]
-                                            # }
-                                            # self.send_event(event_payload)
+                                            event_payload = {
+                                                "symbol": self.symbol,
+                                                "timeframe": "5m",
+                                                "events": [
+                                                    {
+                                                        "id": f"5m_BOS_{candle_5m['time'].strftime('%Y%m%d_%H%M')}",
+                                                        "type": "BOS",
+                                                        "broken_level": self.state.candidate_low_5m,
+                                                        "time": self.state.candidate_low_5m_time.isoformat()
+                                                    }
+                                                ]
+                                            }
+                                            self.send_event(event_payload)
 
                                             self.state.candidate_low_5m = candle_5m["low"]
                                             self.state.candidate_low_5m_time = candle_5m["time"]
@@ -1053,6 +1070,20 @@ class TradingEngine:
 
                                         # CHOCH 5m (BEARISH VERSION)
                                         if candle_5m["high"] > self.state.swing_high_5m:
+                                            # 📡 Broadcast 5M CHOCH
+                                            event_payload = {
+                                                "symbol": self.symbol,
+                                                "timeframe": "5m",
+                                                "events": [
+                                                    {
+                                                        "id": f"5m_CHOCH_{candle_5m['time'].strftime('%Y%m%d_%H%M')}",
+                                                        "type": "CHOCH",
+                                                        "broken_level": self.state.swing_high_5m,
+                                                        "time": self.state.swing_high_5m_time.isoformat()
+                                                    }
+                                                ]
+                                            }
+                                            self.send_event(event_payload)
 
                                             self.state.swing_low_5m = self.state.candidate_low_5m
                                             self.state.swing_low_5m_time = self.state.candidate_low_5m_time
@@ -1307,7 +1338,7 @@ class TradingEngine:
                                         print("Trade Details:", self.state.trade)
                                         #print()
 
-                                    if self.state.choch_5m and self.state.choch_trade and not self.state.choch_trade_planned:
+                                    if self.state.choch_5m and self.state.choch_trade_active and not self.state.choch_trade_planned:
                                         self.state.choch_5m = False
 
                                         if self.state.trend_4h == "BULLISH":
@@ -1328,7 +1359,7 @@ class TradingEngine:
 
                                         if risk <= 0 or take_profit > self.state.swing_high :
                                             self.state.choch_5m = None 
-                                            self.state.trade_active = False                                            
+                                            self.state.choch_trade_active = False                                            
                                             continue
 
                                         self.state.choch_trade = {
@@ -1736,7 +1767,7 @@ class TradingEngine:
 
                                         if risk <= 0 or take_profit < self.state.swing_low :
                                             self.state.choch_5m = None 
-                                            self.state.trade_active = False
+                                            self.state.choch_trade_active = False
                                             continue
 
                                         self.state.choch_trade = {
